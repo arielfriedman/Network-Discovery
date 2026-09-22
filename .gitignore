@@ -1,0 +1,17 @@
+# Credentials - the vault must never be committed, encrypted or not.
+config/vault.gpg
+config/vault*
+*.gpg
+*.asc
+
+# Scan results: these describe a real network. Keep them local.
+reports/*
+!reports/.gitkeep
+
+# Local overrides
+config/settings.local.conf
+
+# Editor / OS noise
+*.swp
+*~
+.DS_Store

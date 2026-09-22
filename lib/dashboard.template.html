@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Network Discovery</title>
+<style>
+  :root {
+    color-scheme: light;
+    --plane:          #f9f9f7;
+    --surface-1:      #fcfcfb;
+    --text-primary:   #0b0b0b;
+    --text-secondary: #52514e;
+    --text-muted:     #898781;
+    --grid:           #e1e0d9;
+    --baseline:       #c3c2b7;
+    --border:         rgba(11,11,11,0.10);
+    --series-1:       #2a78d6;
+    --series-1-soft:  #cde2fb;
+    --good:           #0ca30c;
+    --warning:        #fab219;
+    --serious:        #ec835a;
+    --critical:       #d03b3b;
+    --radius:         10px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:where(:not([data-theme="light"])) {
+      color-scheme: dark;
+      --plane:          #0d0d0d;
+      --surface-1:      #1a1a19;
+      --text-primary:   #ffffff;
+      --text-secondary: #c3c2b7;
+      --text-muted:     #898781;
+      --grid:           #2c2c2a;
+      --baseline:       #383835;
+      --border:         rgba(255,255,255,0.10);
+      --series-1:       #3987e5;
+      --series-1-soft:  #184f95;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --plane:          #0d0d0d;
+    --surface-1:      #1a1a19;
+    --text-primary:   #ffffff;
+    --text-secondary: #c3c2b7;
+    --text-muted:     #898781;
+    --grid:           #2c2c2a;
+    --baseline:       #383835;
+    --border:         rgba(255,255,255,0.10);
+    --series-1:       #3987e5;
+    --series-1-soft:  #184f95;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 0 16px 64px;
+    background: var(--plane); color: var(--text-primary);
+    font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  .wrap { max-width: 1180px; margin: 0 auto; }
+
+  header { padding: 28px 0 20px; display: flex; flex-wrap: wrap;
+           gap: 16px; align-items: flex-start; justify-content: space-between; }
+  h1 { margin: 0 0 6px; font-size: 24px; letter-spacing: -0.01em; }
+  .sub { color: var(--text-secondary); font-size: 13.5px; }
+  .sub code { background: var(--surface-1); border: 1px solid var(--border);
+              border-radius: 5px; padding: 1px 6px; font-size: 12.5px; }
+  button.theme {
+    background: var(--surface-1); color: var(--text-secondary);
+    border: 1px solid var(--border); border-radius: 999px;
+    padding: 7px 14px; font: inherit; font-size: 13px; cursor: pointer;
+  }
+  button.theme:hover { color: var(--text-primary); }
+
+  section { margin: 26px 0; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.07em;
+       color: var(--text-muted); margin: 0 0 12px; font-weight: 600; }
+
+  /* ---- stat tiles ---- */
+  .tiles { display: grid; gap: 12px;
+           grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+  .tile { background: var(--surface-1); border: 1px solid var(--border);
+          border-radius: var(--radius); padding: 16px 18px; }
+  .tile .v { font-size: 30px; font-weight: 650; letter-spacing: -0.02em;
+             line-height: 1.1; }
+  .tile .k { color: var(--text-secondary); font-size: 12.5px; margin-top: 4px; }
+
+  /* ---- notable ---- */
+  .notes { display: flex; flex-direction: column; gap: 8px; }
+  .note { display: flex; gap: 10px; align-items: flex-start;
+          background: var(--surface-1); border: 1px solid var(--border);
+          border-left: 3px solid var(--text-muted);
+          border-radius: 8px; padding: 11px 14px; font-size: 14px; }
+  .note.warn { border-left-color: var(--warning); }
+  .note.info { border-left-color: var(--series-1); }
+  .note .ic { flex: none; font-weight: 700; font-size: 12px;
+              letter-spacing: 0.04em; padding-top: 1px; }
+  .note.warn .ic { color: var(--serious); }
+  .note.info .ic { color: var(--series-1); }
+
+  /* ---- charts ---- */
+  .charts { display: grid; gap: 16px;
+            grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); }
+  .card { background: var(--surface-1); border: 1px solid var(--border);
+          border-radius: var(--radius); padding: 18px 20px 20px; }
+  .card h3 { margin: 0 0 2px; font-size: 15px; font-weight: 600; }
+  .card .cap { color: var(--text-muted); font-size: 12.5px; margin-bottom: 16px; }
+
+  .bars { display: flex; flex-direction: column; gap: 2px; }
+  .row { display: grid; grid-template-columns: minmax(96px, 38%) 1fr auto;
+         gap: 10px; align-items: center; padding: 3px 0; position: relative;
+         cursor: default; }
+  .row .lbl { color: var(--text-secondary); font-size: 12.5px;
+              white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .track { height: 16px; background: transparent; position: relative; }
+  .track::before { content: ""; position: absolute; inset: 0;
+                   border-left: 1px solid var(--baseline); }
+  .bar { height: 16px; background: var(--series-1);
+         border-radius: 0 4px 4px 0; min-width: 2px;
+         transition: filter .12s ease; }
+  .row:hover .bar { filter: brightness(1.12); }
+  .row .num { font-size: 12.5px; color: var(--text-secondary);
+              font-variant-numeric: tabular-nums; min-width: 28px; text-align: right; }
+  .empty { color: var(--text-muted); font-size: 13px; padding: 8px 0; }
+
+  /* tooltip */
+  .tip { position: fixed; z-index: 50; pointer-events: none; opacity: 0;
+         background: var(--surface-1); color: var(--text-primary);
+         border: 1px solid var(--border); border-radius: 8px;
+         padding: 8px 11px; font-size: 12.5px; line-height: 1.45;
+         box-shadow: 0 6px 20px rgba(0,0,0,.16); transition: opacity .1s;
+         max-width: 280px; }
+  .tip.on { opacity: 1; }
+  .tip b { font-weight: 600; }
+
+  /* ---- table ---- */
+  .toolbar { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 12px; }
+  .toolbar input, .toolbar select {
+    background: var(--surface-1); color: var(--text-primary);
+    border: 1px solid var(--border); border-radius: 8px;
+    padding: 8px 11px; font: inherit; font-size: 13.5px; }
+  .toolbar input { flex: 1 1 240px; }
+  table { width: 100%; border-collapse: collapse; background: var(--surface-1);
+          border: 1px solid var(--border); border-radius: var(--radius);
+          overflow: hidden; font-size: 13.5px; }
+  th, td { text-align: left; padding: 9px 14px; border-bottom: 1px solid var(--grid);
+           vertical-align: top; }
+  th { color: var(--text-muted); font-size: 11.5px; text-transform: uppercase;
+       letter-spacing: 0.06em; font-weight: 600; cursor: pointer;
+       user-select: none; white-space: nowrap; }
+  th:hover { color: var(--text-primary); }
+  tbody tr:last-child td { border-bottom: 0; }
+  tbody tr:hover { background: color-mix(in srgb, var(--series-1) 6%, transparent); }
+  td.ip { font-variant-numeric: tabular-nums; font-weight: 600; white-space: nowrap; }
+  td.mac { color: var(--text-muted); font-size: 12.5px; white-space: nowrap; }
+  .chips { display: flex; flex-wrap: wrap; gap: 4px; }
+  .chip { background: var(--series-1-soft);
+          color: color-mix(in srgb, var(--text-primary) 82%, var(--series-1));
+          border-radius: 5px; padding: 1px 6px; font-size: 11.5px;
+          font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .muted { color: var(--text-muted); }
+  footer { margin-top: 36px; color: var(--text-muted); font-size: 12.5px;
+           border-top: 1px solid var(--border); padding-top: 16px; }
+  @media (max-width: 620px) {
+    .row { grid-template-columns: minmax(80px, 46%) 1fr auto; }
+    th.opt, td.opt { display: none; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <h1>Network discovery</h1>
+      <div class="sub" id="meta"></div>
+    </div>
+    <button class="theme" id="themeBtn" type="button">Theme</button>
+  </header>
+
+  <section>
+    <h2>At a glance</h2>
+    <div class="tiles" id="tiles"></div>
+  </section>
+
+  <section id="notableSec">
+    <h2>Worth a look</h2>
+    <div class="notes" id="notes"></div>
+  </section>
+
+  <section>
+    <h2>Breakdown</h2>
+    <div class="charts" id="charts"></div>
+  </section>
+
+  <section>
+    <h2>Hosts</h2>
+    <div class="toolbar">
+      <input id="q" type="search" placeholder="Filter by IP, hostname, vendor, OS or service…">
+      <select id="portFilter"><option value="">Any open port</option></select>
+      <select id="hasPorts">
+        <option value="">All hosts</option>
+        <option value="yes">Only hosts with open ports</option>
+        <option value="no">Only hosts with none found</option>
+      </select>
+    </div>
+    <table>
+      <thead><tr>
+        <th data-sort="ip">IP</th>
+        <th data-sort="hostname">Name</th>
+        <th data-sort="vendor" class="opt">Vendor</th>
+        <th data-sort="os" class="opt">OS guess</th>
+        <th data-sort="nports">Open ports</th>
+      </tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+    <div class="sub" id="count" style="margin-top:10px"></div>
+  </section>
+
+  <footer id="foot"></footer>
+</div>
+<div class="tip" id="tip"></div>
+
+<script id="data" type="application/json">/*__FINDINGS_JSON__*/</script>
+<script>
+(function () {
+  "use strict";
+  const D = JSON.parse(document.getElementById("data").textContent);
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g,
+    (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+  /* ---------- theme (viewer choice wins over the OS setting) ---------- */
+  try {
+    const saved = localStorage.getItem("netdisc-theme");
+    if (saved) document.documentElement.setAttribute("data-theme", saved);
+  } catch (e) { /* private window - fall back to the OS setting */ }
+  $("themeBtn").addEventListener("click", () => {
+    const cur = document.documentElement.getAttribute("data-theme");
+    const isDark = cur ? cur === "dark"
+      : matchMedia("(prefers-color-scheme: dark)").matches;
+    const next = isDark ? "light" : "dark";
+    document.documentElement.setAttribute("data-theme", next);
+    try { localStorage.setItem("netdisc-theme", next); } catch (e) {}
+  });
+
+  /* ---------- header ---------- */
+  const m = D.meta || {};
+  $("meta").innerHTML =
+    `<code>${esc(m.target)}</code> on <code>${esc(m.interface)}</code> · ` +
+    `gateway <code>${esc(m.gateway)}</code> · scanned from <code>${esc(m.scanner_ip)}</code>` +
+    `<br>Run ${esc(m.run_id)} — ${esc((m.started || "").replace("T", " ").slice(0, 19))}`;
+
+  /* ---------- stat tiles ---------- */
+  const s = D.stats || {};
+  const tiles = [
+    ["Live hosts", s.hosts],
+    ["Open services", s.services],
+    ["Distinct ports", s.distinct_ports],
+    ["Named hosts", s.named_hosts],
+    ["Vendors seen", s.vendors],
+    ["Cloud resources", s.cloud_resources],
+  ];
+  $("tiles").innerHTML = tiles.map(([k, v]) =>
+    `<div class="tile"><div class="v">${v == null ? "—" : v}</div><div class="k">${esc(k)}</div></div>`
+  ).join("");
+
+  /* ---------- notable ---------- */
+  const notes = D.notable || [];
+  if (!notes.length) { $("notableSec").style.display = "none"; }
+  else {
+    $("notes").innerHTML = notes.map((n) => {
+      const lvl = n.level === "warn" ? "warn" : "info";
+      const label = lvl === "warn" ? "CHECK" : "NOTE";
+      return `<div class="note ${lvl}"><span class="ic">${label}</span><span>${esc(n.text)}</span></div>`;
+    }).join("");
+  }
+
+  /* ---------- tooltip ---------- */
+  const tip = $("tip");
+  function showTip(html, ev) {
+    tip.innerHTML = html; tip.classList.add("on");
+    const pad = 14, r = tip.getBoundingClientRect();
+    let x = ev.clientX + pad, y = ev.clientY + pad;
+    if (x + r.width > innerWidth - 8) x = ev.clientX - r.width - pad;
+    if (y + r.height > innerHeight - 8) y = ev.clientY - r.height - pad;
+    tip.style.left = x + "px"; tip.style.top = y + "px";
+  }
+  const hideTip = () => tip.classList.remove("on");
+
+  /* ---------- bar charts (single series: one hue, no legend needed) ---- */
+  function barChart(title, caption, rows, unit) {
+    const max = Math.max(1, ...rows.map((r) => r.count));
+    const total = rows.reduce((a, r) => a + r.count, 0);
+    const body = rows.length ? rows.map((r) => {
+      const pct = (r.count / max) * 100;
+      const share = total ? Math.round((r.count / total) * 100) : 0;
+      return `<div class="row" data-tip="<b>${esc(r.label)}</b><br>${r.count} ${esc(unit)}${r.count === 1 ? "" : "s"} · ${share}% of shown">
+          <div class="lbl" title="${esc(r.label)}">${esc(r.label)}</div>
+          <div class="track"><div class="bar" style="width:${pct.toFixed(1)}%"></div></div>
+          <div class="num">${r.count}</div></div>`;
+    }).join("") : `<div class="empty">No data — that stage was skipped or found nothing.</div>`;
+    return `<div class="card"><h3>${esc(title)}</h3><div class="cap">${esc(caption)}</div>
+            <div class="bars">${body}</div></div>`;
+  }
+
+  $("charts").innerHTML =
+    barChart("Most common open ports", "How many hosts expose each port", D.top_ports || [], "host") +
+    barChart("Hardware vendors", "From the MAC address prefix", D.vendors || [], "device") +
+    barChart("Operating systems", "nmap fingerprint, best guess", D.os_families || [], "host");
+
+  document.querySelectorAll(".row[data-tip]").forEach((row) => {
+    row.addEventListener("mousemove", (e) => showTip(row.dataset.tip, e));
+    row.addEventListener("mouseleave", hideTip);
+  });
+
+  /* ---------- host table ---------- */
+  const hosts = (D.hosts || []).map((h) => ({
+    ...h,
+    nports: (h.ports || []).length,
+    ipkey: (h.ip || "").split(".").map((n) => String(n).padStart(3, "0")).join("."),
+    hay: [h.ip, h.hostname, h.vendor, h.os, h.mac, h.mdns, h.netbios, h.ssdp,
+          ...(h.ports || []).map((p) => p.port + " " + p.service + " " + (p.version || ""))]
+         .filter(Boolean).join(" ").toLowerCase(),
+  }));
+
+  const allPorts = [...new Set(hosts.flatMap((h) => (h.ports || []).map((p) => p.port)))]
+    .sort((a, b) => parseInt(a) - parseInt(b));
+  $("portFilter").insertAdjacentHTML("beforeend",
+    allPorts.map((p) => `<option value="${esc(p)}">${esc(p)}</option>`).join(""));
+
+  let sortKey = "ipkey", sortDir = 1;
+
+  function render() {
+    const q = $("q").value.trim().toLowerCase();
+    const port = $("portFilter").value;
+    const hp = $("hasPorts").value;
+    let list = hosts.filter((h) => {
+      if (q && !h.hay.includes(q)) return false;
+      if (port && !(h.ports || []).some((p) => p.port === port)) return false;
+      if (hp === "yes" && h.nports === 0) return false;
+      if (hp === "no" && h.nports > 0) return false;
+      return true;
+    });
+    const key = sortKey === "ip" ? "ipkey" : sortKey;
+    list.sort((a, b) => {
+      const x = a[key], y = b[key];
+      if (typeof x === "number" && typeof y === "number") return (x - y) * sortDir;
+      return String(x || "").localeCompare(String(y || "")) * sortDir;
+    });
+    $("rows").innerHTML = list.length ? list.map((h) => `
+      <tr>
+        <td class="ip">${esc(h.ip)}</td>
+        <td>${h.hostname ? esc(h.hostname) : '<span class="muted">—</span>'}
+            ${h.mac ? `<div class="mac">${esc(h.mac)}</div>` : ""}</td>
+        <td class="opt">${h.vendor ? esc(h.vendor) : '<span class="muted">—</span>'}</td>
+        <td class="opt">${h.os ? esc(h.os) : '<span class="muted">—</span>'}</td>
+        <td>${h.nports ? `<div class="chips">${h.ports.map((p) =>
+              `<span class="chip" title="${esc(p.version || p.service)}">${esc(p.port)} ${esc(p.service)}</span>`
+            ).join("")}</div>` : '<span class="muted">none found</span>'}</td>
+      </tr>`).join("")
+      : `<tr><td colspan="5" class="muted" style="padding:20px 14px">No host matches that filter.</td></tr>`;
+    $("count").textContent = `${list.length} of ${hosts.length} host${hosts.length === 1 ? "" : "s"} shown`;
+  }
+
+  $("q").addEventListener("input", render);
+  $("portFilter").addEventListener("change", render);
+  $("hasPorts").addEventListener("change", render);
+  document.querySelectorAll("th[data-sort]").forEach((th) => {
+    th.addEventListener("click", () => {
+      const k = th.dataset.sort;
+      sortDir = sortKey === k ? -sortDir : 1;
+      sortKey = k;
+      render();
+    });
+  });
+  render();
+
+  /* ---------- cloud + footer ---------- */
+  const cloudBits = Object.entries(D.cloud || {}).map(([prov, kinds]) =>
+    `${prov}: ` + Object.entries(kinds).map(([k, v]) => `${k} ${v}`).join(", ")
+  );
+  $("foot").innerHTML =
+    (cloudBits.length ? `<div><b>Cloud</b> — ${cloudBits.map(esc).join(" · ")}</div>` : "") +
+    `<div style="margin-top:6px">Generated offline by <code>discover.sh</code>. ` +
+    `No credentials are stored in this file. Raw tool output sits beside it in <code>raw/</code>.</div>`;
+})();
+</script>
+</body>
+</html>
