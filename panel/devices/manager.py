@@ -364,6 +364,11 @@ def rollback(change_id: int) -> dict:
         except DeviceError as e:
             ok = False
             results.append({"step": "Commit", "ok": False, "detail": str(e)})
+            try:        # don't leave the undo edits sitting in the candidate config
+                drv.discard()
+                results.append({"step": "Discard uncommitted changes", "ok": True, "detail": ""})
+            except DeviceError as e2:
+                results.append({"step": "Discard uncommitted changes", "ok": False, "detail": str(e2)})
     if ok:
         _q("UPDATE config_changes SET status = 'rolled_back' WHERE id = %s", (change_id,))
     db.log("device.config.rollback", drv.address, {"change_id": change_id, "ok": ok})

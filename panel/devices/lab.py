@@ -240,7 +240,7 @@ def main(argv):
             return 2
         _, _, info = SIMULATORS[n]()
         creds = ", ".join(f"{k}={v}" for k, v in info["creds"].items())
-        print(f"  {n:<11} {info['model']:<26} {info['address']} port {info['port']:<5}  {creds}")
+        print(f"  {n:<17} {info['model']:<34} {info['address']} port {info['port']:<5}  {creds}")
     print("\nAdd them on the Devices page with the address and port above.")
     try:
         threading.Event().wait()
@@ -250,4 +250,7 @@ def main(argv):
 
 
 if __name__ == "__main__":
-    sys.exit(main(sys.argv))
+    # Run through the package module, so lab_<vendor>.py plugins register into
+    # the same SIMULATORS dict that main() reads (not into a second copy).
+    import importlib
+    sys.exit(importlib.import_module("devices.lab").main(sys.argv))
