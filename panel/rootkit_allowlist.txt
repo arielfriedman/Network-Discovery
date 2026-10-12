@@ -1,0 +1,8 @@
+# SentinelScan rootkit / persistence allowlist
+#
+# Units, cron files and kernel modules you have checked and trust.
+# One entry per line: a name (my-agent.service), a full path
+# (/etc/cron.d/backup) or a glob (zabbix-*.service). The scan skips them.
+#
+# Package-owned vendor units (symlinks into /usr/lib/systemd) are already
+# skipped automatically; only add your own things here.

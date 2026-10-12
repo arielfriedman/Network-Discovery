@@ -11,6 +11,7 @@ Windows: Autoruns via PowerShell, suspicious scheduled tasks, hidden services,
          unusual startup registry keys, DLL hijacking indicators
 """
 from __future__ import annotations
+import fnmatch
 import os
 import re
 from pathlib import Path
@@ -18,6 +19,22 @@ from typing import Iterator
 
 from .base import ScanModule, Finding, Severity
 from .orchestrator import register_module
+
+# Things you have checked and trust. One entry per line: a unit / file name,
+# a full path, or a glob (e.g. "my-backup-*.service"). Lines starting with # are comments.
+ALLOWLIST_FILE = Path(__file__).resolve().parent.parent / "rootkit_allowlist.txt"
+
+
+def load_allowlist() -> list[str]:
+    try:
+        lines = ALLOWLIST_FILE.read_text().splitlines()
+    except OSError:
+        return []
+    return [ln.strip() for ln in lines if ln.strip() and not ln.lstrip().startswith("#")]
+
+
+def is_allowed(allow: list[str], *names: str) -> bool:
+    return any(fnmatch.fnmatch(n, pat) for n in names for pat in allow)
 
 
 @register_module
@@ -36,6 +53,7 @@ class RootkitModule(ScanModule):
         "nvidia", "nouveau", "i915", "amdgpu", "radeon",
         "e1000", "e1000e", "igb", "ixgbe", "r8169", "rtl8xxxu",
         "usbhid", "hid_generic", "bluetooth", "bnep",
+        "hidp", "hid",  # hidp = Bluetooth HID; it matches the ^hid[a-z]{1,3}$ rootkit pattern
         "dm_mod", "dm_crypt", "md_mod", "raid1", "raid5",
         "tcp_cubic", "tcp_bbr", "iptable_filter", "nf_conntrack",
         "overlay", "br_netfilter", "veth", "dummy", "tun", "tap",
@@ -190,13 +208,14 @@ class RootkitModule(ScanModule):
         suspicious_mods = []
 
         # Patterns that suggest malicious or uncommon modules
+        allow = load_allowlist()
         suspicious_patterns = [
             r"^hide_", r"^hid[a-z]{1,3}$", r"^r?kit", r"^bd_",
             r"diamorphine", r"reptile", r"azazel", r"necurs",
         ]
         for line in stdout.splitlines()[1:]:  # Skip header
             mod_name = line.split()[0].lower() if line.split() else ""
-            if not mod_name:
+            if not mod_name or mod_name in self.KNOWN_MODULES or is_allowed(allow, mod_name):
                 continue
             for pattern in suspicious_patterns:
                 if re.match(pattern, mod_name):
@@ -300,14 +319,19 @@ class RootkitModule(ScanModule):
             r"/tmp/",
             r"/dev/shm/",
         ]
+        allow = load_allowlist()
         suspicious_crons = []
         for base in cron_locations:
             if not os.path.isdir(base):
                 continue
             try:
                 for entry in os.scandir(base):
+                    if is_allowed(allow, entry.name, entry.path):
+                        continue
                     try:
                         content = Path(entry.path).read_text(errors="replace")
+                        # comments mention /tmp and curl all the time; only judge live lines
+                        content = "\n".join(ln for ln in content.splitlines() if not ln.lstrip().startswith("#"))
                         for pattern in SUSPICIOUS_PATTERNS:
                             matches = re.findall(pattern, content, re.IGNORECASE)
                             if matches:
@@ -351,45 +375,100 @@ class RootkitModule(ScanModule):
             pass
 
     # ── Systemd persistence ───────────────────────────────────────────────────
+    # Exec* lines only, whole words only: "nc" must not match "timesyncd".
+    _EXEC_LINE = re.compile(r"^\s*Exec(Start|StartPre|StartPost|Stop|StopPost|Reload|Condition)\s*=(.*)$", re.MULTILINE)
+    _STRONG = [  # (label, pattern) - reverse shells, download-and-run, temp-dir execution
+        ("runs from a temp dir",   re.compile(r"(^|[\s=\"'])[-@!+:]*(/tmp|/var/tmp|/dev/shm)/")),
+        ("interactive shell",      re.compile(r"\b(ba|z|da)?sh\s+-i\b")),
+        ("/dev/tcp socket",        re.compile(r"/dev/(tcp|udp)/")),
+        ("netcat with -e/-c",      re.compile(r"\b(nc|ncat|netcat)\b[^\n]*\s-[ec]\b")),
+        ("piped into a shell",     re.compile(r"\|\s*(sudo\s+)?(ba|z|da)?sh\b")),
+        ("base64 decode",          re.compile(r"\bbase64\s+(-d|--decode)\b")),
+    ]
+    _WEAK = [   # worth a look, but legitimate units do this too
+        ("downloader",             re.compile(r"\b(wget|curl)\b")),
+        ("netcat/socat",           re.compile(r"\b(nc|ncat|netcat|socat)\b")),
+    ]
+    _VENDOR_DIRS = ("/usr/lib/systemd/", "/lib/systemd/")
+
+    def _package_owner(self, path: str) -> str:
+        """Name of the package that installed `path`, or "" if none / unknown."""
+        for cmd in (["dpkg-query", "-S", path], ["rpm", "-qf", path]):
+            out, _, rc = self.run_command(cmd, timeout=10)
+            if rc == 0 and out.strip() and "not owned" not in out:
+                return out.split(":")[0].strip()
+        return ""
+
     def _check_systemd_persistence(self) -> Iterator[Finding]:
         self._emit_progress(82, "Checking systemd units for persistence...")
-        suspicious_unit_dirs = [
+        unit_dirs = [
             "/etc/systemd/system",
             "/usr/local/lib/systemd/system",
             "/run/systemd/system",
         ]
-        KNOWN_SUSPICIOUS = re.compile(
-            r"(ExecStart.*(/tmp|/dev/shm|/var/tmp))|"
-            r"(ExecStart.*(wget|curl|nc|bash -i|base64))|"
-            r"(ExecStart.*\|.*sh)",
-            re.IGNORECASE
-        )
-        suspicious_units = []
-        for udir in suspicious_unit_dirs:
+        allow = load_allowlist()
+        strong, weak = [], []          # (unit path, reason, offending line)
+        for udir in unit_dirs:
             if not os.path.isdir(udir):
                 continue
             try:
-                for entry in os.scandir(udir):
-                    if not entry.name.endswith((".service", ".timer", ".socket")):
-                        continue
-                    try:
-                        content = Path(entry.path).read_text(errors="replace")
-                        if KNOWN_SUSPICIOUS.search(content):
-                            suspicious_units.append(entry.name)
-                    except (PermissionError, OSError):
-                        continue
+                entries = list(os.scandir(udir))
             except (PermissionError, OSError):
                 continue
+            for entry in entries:
+                if not entry.name.endswith((".service", ".timer", ".socket")):
+                    continue
+                if is_allowed(allow, entry.name, entry.path):
+                    continue
+                real = os.path.realpath(entry.path)
+                # An alias/enable symlink to a vendor unit that a package installed
+                # (e.g. dbus-org.freedesktop.timesync1.service -> systemd-timesyncd)
+                # is stock; package integrity is rkhunter/debsums' job, not ours.
+                if real != entry.path and real.startswith(self._VENDOR_DIRS) and self._package_owner(real):
+                    continue
+                try:
+                    content = Path(real).read_text(errors="replace")
+                except (PermissionError, OSError):
+                    continue
+                for m in self._EXEC_LINE.finditer(content):
+                    line = m.group(0).strip()
+                    cmd = m.group(2)
+                    hit = next((lbl for lbl, rx in self._STRONG if rx.search(cmd)), None)
+                    if hit:
+                        strong.append((entry.path, hit, line)); break
+                    hit = next((lbl for lbl, rx in self._WEAK if rx.search(cmd)), None)
+                    if hit:
+                        weak.append((entry.path, hit, line)); break
 
-        if suspicious_units:
+        def _detail(rows):
+            return "\n".join(f"{p}  [{why}]\n    {ln[:160]}" for p, why, ln in rows[:8])
+
+        fix = ("Investigate with: systemctl cat <unit>\n"
+               "Disable: systemctl disable --now <unit>\n"
+               "Remove unit file and reload: systemctl daemon-reload\n"
+               f"If it is yours and expected, add its name to {ALLOWLIST_FILE.name}.")
+        if strong:
+            names = ", ".join(os.path.basename(p) for p, _, _ in strong)
             yield Finding(
-                title              = f"Suspicious systemd unit(s): {', '.join(suspicious_units)}",
+                title              = f"Suspicious systemd unit(s): {names}",
                 severity           = Severity.CRITICAL,
                 category           = "Rootkits",
-                description        = f"Systemd unit files with suspicious ExecStart commands (temp dir execution, reverse shells, downloaders): {', '.join(suspicious_units)}",
-                affected_component = f"systemd units: {', '.join(suspicious_units)}",
-                remediation        = "Investigate with: systemctl cat <unit>\nDisable: systemctl disable --now <unit>\nRemove unit file and reload: systemctl daemon-reload",
+                description        = "Systemd units whose Exec lines run from a temp directory, open a reverse shell, "
+                                     "or pipe downloaded data into a shell:\n" + _detail(strong),
+                affected_component = f"systemd units: {names}",
+                remediation        = fix,
                 cvss_score         = 9.5,
+            )
+        if weak:
+            names = ", ".join(os.path.basename(p) for p, _, _ in weak)
+            yield Finding(
+                title              = f"Systemd unit(s) using network tools: {names}",
+                severity           = Severity.LOW,
+                category           = "Rootkits",
+                description        = "These units call wget/curl/netcat/socat. That is often legitimate "
+                                     "(health checks, updaters) but is also how persistence is fetched:\n" + _detail(weak),
+                affected_component = f"systemd units: {names}",
+                remediation        = fix,
             )
 
     # ─────────────────────────────────────────────────────────────────────────
