@@ -20,6 +20,22 @@
     try { localStorage.setItem("sentinel-theme", n); } catch (e) {}
   };
 
+  // Every request that changes something carries the panel's per-launch token.
+  const TOKEN = (document.querySelector('meta[name="sentinel-token"]') || {}).content || "";
+  window.api = async (path, body, method) => {
+    const opt = { method: method || (body === undefined ? "GET" : "POST"), headers: {} };
+    if (opt.method !== "GET") {
+      opt.headers["X-Sentinel-Token"] = TOKEN;
+      opt.headers["Content-Type"] = "application/json";
+      opt.body = JSON.stringify(body || {});
+    }
+    const r = await fetch(path, opt);
+    let j = {};
+    try { j = await r.json(); } catch (e) {}
+    if (!r.ok) { const err = new Error(j.error || `HTTP ${r.status}`); err.status = r.status; err.data = j; throw err; }
+    return j;
+  };
+
   window.esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   window.fmtTime = s => s ? new Date(s).toLocaleString([], { dateStyle: "medium", timeStyle: "short" }) : "";
 

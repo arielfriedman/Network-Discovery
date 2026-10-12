@@ -104,8 +104,8 @@ document.addEventListener("DOMContentLoaded",function(){
     const o={scope};
     $("opts").querySelectorAll("select").forEach(s=>o[s.dataset.k]=s.value);
     $("startBtn").disabled=true;
-    const r=await fetch("/api/scan/start",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(o)});
-    const j=await r.json(); curId=j.scan_id;
+    let j; try{ j=await api("/api/scan/start",o); }catch(e){ alert("Could not start the scan: "+e.message); $("startBtn").disabled=false; return; }
+    curId=j.scan_id;
     $("setup").style.display="none"; $("run").style.display="block";
     $("runTitle").textContent="Scanning";
     $("doneBar").style.display="none"; $("frame").style.display="none";
@@ -117,7 +117,7 @@ document.addEventListener("DOMContentLoaded",function(){
   $("stopBtn").onclick=async()=>{
     if(!curId) return;
     $("stopBtn").disabled=true; $("stopBtn").textContent="Stopping…";
-    await fetch(`/api/scan/${curId}/stop`,{method:"POST"});
+    await api(`/api/scan/${curId}/stop`,{});
   };
   async function poll(){
     if(!curId)return;

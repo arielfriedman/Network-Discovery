@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+import secrets
 import re
 import shutil
 import signal
@@ -33,6 +34,8 @@ import scanner  # noqa: F401 — registers modules
 from scanner import ScanSession, ScanOrchestrator, MODULE_REGISTRY
 from reporters import generate_dashboard
 import db
+from devices import manager as devmgr
+from devices.base import DeviceError, PinMismatch, PinRequired
 
 HOST, PORT = "127.0.0.1", 8765
 APP_DIR = Path(__file__).resolve().parent
@@ -44,6 +47,11 @@ PAGES = {"/": "index.html", "/index.html": "index.html",
 CTYPES = {".html": "text/html; charset=utf-8", ".css": "text/css; charset=utf-8",
           ".js": "text/javascript; charset=utf-8", ".svg": "image/svg+xml"}
 ND_DIR = APP_DIR.parent / "discovery"  # network/cloud tool, same repo
+
+# Per-launch secret the panel's own pages send with every change request.
+# Another website open in the same browser cannot read it, so it cannot make
+# the panel start scans or change device configs (CSRF).
+TOKEN = secrets.token_urlsafe(32)
 
 # ── in-memory scan state ─────────────────────────────────────────────────────
 SCANS: dict[str, dict] = {}
@@ -351,14 +359,62 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def _host_ok(self) -> bool:
+        """Only answer to our own name: blocks DNS-rebinding attacks from web pages."""
+        port = self.server.server_address[1]
+        host = (self.headers.get("Host") or "").lower()
+        if host in (f"127.0.0.1:{port}", f"localhost:{port}", f"[::1]:{port}"):
+            return True
+        self._send(403, {"error": "unexpected Host header"})
+        return False
+
+    def _write_ok(self) -> bool:
+        port = self.server.server_address[1]
+        origin = self.headers.get("Origin")
+        if origin and origin not in (f"http://127.0.0.1:{port}", f"http://localhost:{port}"):
+            self._send(403, {"error": "cross-origin request refused"})
+            return False
+        if not secrets.compare_digest(self.headers.get("X-Sentinel-Token", ""), TOKEN):
+            self._send(403, {"error": "missing or wrong panel token - reload the page"})
+            return False
+        return True
+
+    def _body(self) -> dict:
+        length = int(self.headers.get("Content-Length") or 0)
+        try:
+            b = json.loads(self.rfile.read(length) or "{}")
+            return b if isinstance(b, dict) else {}
+        except ValueError:
+            return {}
+
+    def _device_call(self, fn):
+        """Run a device-manager call and map its errors to HTTP answers."""
+        try:
+            return self._send(200, fn())
+        except PinMismatch as e:
+            return self._send(409, {"error": str(e), "pin_mismatch": e.fingerprint, "kind": e.kind})
+        except PinRequired as e:
+            return self._send(409, {"error": str(e), "pin_required": e.fingerprint, "kind": e.kind})
+        except DeviceError as e:
+            return self._send(400, {"error": str(e)})
+        except Exception as e:  # noqa: BLE001
+            return self._send(500, {"error": f"{type(e).__name__}: {e}"})
+
     def do_GET(self):
+        if not self._host_ok():
+            return
         path = urlparse(self.path).path
+        if path.startswith("/api/devices"):
+            return self._devices_get(path)
         if path in PAGES or path.startswith("/web/"):
             name = PAGES.get(path) or path[len("/web/"):]
             f = (WEB / name).resolve()
             if WEB.resolve() not in f.parents or not f.is_file():
                 return self._send(404, {"error": "not found"})
-            return self._send(200, f.read_bytes(), CTYPES.get(f.suffix, "application/octet-stream"))
+            data = f.read_bytes()
+            if f.suffix == ".html":
+                data = data.replace(b"</head>", f'<meta name="sentinel-token" content="{TOKEN}">\n</head>'.encode(), 1)
+            return self._send(200, data, CTYPES.get(f.suffix, "application/octet-stream"))
         if path == "/api/db/status":
             return self._send(200, db.status())
         if path == "/api/history":
@@ -409,13 +465,13 @@ class Handler(BaseHTTPRequestHandler):
         return self._send(404, {"error": "not found"})
 
     def do_POST(self):
+        if not self._host_ok() or not self._write_ok():
+            return
         path = urlparse(self.path).path
+        if path.startswith("/api/devices"):
+            return self._devices_post(path, self._body())
         if path == "/api/scan/start":
-            length = int(self.headers.get("Content-Length", 0))
-            try:
-                body = json.loads(self.rfile.read(length) or "{}")
-            except Exception:
-                body = {}
+            body = self._body()
             scope = body.get("scope", "host")
             sid = start_scan(scope, body, self.client_address[0])
             return self._send(200, {"scan_id": sid})
@@ -423,6 +479,68 @@ class Handler(BaseHTTPRequestHandler):
             sid = path.split("/")[3]
             return self._send(200, {"stopped": stop_scan(sid)})
         return self._send(404, {"error": "not found"})
+
+    # ── devices ─────────────────────────────────────────────────────────────
+    def _devices_get(self, path):
+        parts = path.strip("/").split("/")        # api devices [id|vendors|backups] [...]
+        if path == "/api/devices":
+            return self._device_call(lambda: {"devices": devmgr.list_devices()})
+        if path == "/api/devices/vendors":
+            return self._device_call(devmgr.vendors)
+        if len(parts) == 5 and parts[2] == "backups" and parts[4] == "download":
+            try:
+                b = devmgr.get_backup(int(parts[3]))
+            except (ValueError, DeviceError) as e:
+                return self._send(404, {"error": str(e)})
+            stamp = b["taken_at"][:19].replace(":", "").replace("T", "-")
+            name = re.sub(r"[^A-Za-z0-9_.-]", "_", b["device_name"])
+            data = b["config"].encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain; charset=utf-8")
+            self.send_header("Content-Disposition", f'attachment; filename="{name}-{stamp}.conf"')
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers(); self.wfile.write(data)
+            return
+        try:
+            dev = int(parts[2])
+        except (IndexError, ValueError):
+            return self._send(404, {"error": "not found"})
+        what = parts[3] if len(parts) > 3 else ""
+        calls = {"": devmgr.get_device, "overview": devmgr.overview, "wizards": devmgr.wizards,
+                 "backups": devmgr.list_backups, "changes": devmgr.list_changes}
+        if what not in calls:
+            return self._send(404, {"error": "not found"})
+        return self._device_call(lambda: _wrap(calls[what](dev)))
+
+    def _devices_post(self, path, b):
+        parts = path.strip("/").split("/")
+        if path == "/api/devices":
+            return self._device_call(lambda: {"id": devmgr.add_device(b)})
+        if path == "/api/devices/apply":
+            return self._device_call(lambda: devmgr.apply(str(b.get("plan_id", "")), bool(b.get("skip_backup"))))
+        if len(parts) == 5 and parts[2] == "changes" and parts[4] == "rollback":
+            return self._device_call(lambda: devmgr.rollback(int(parts[3])))
+        try:
+            dev = int(parts[2]); what = parts[3]
+        except (IndexError, ValueError):
+            return self._send(404, {"error": "not found"})
+        calls = {
+            "delete": lambda: devmgr.delete_device(dev) or {"ok": True},
+            "probe": lambda: devmgr.probe(dev),
+            "trust": lambda: devmgr.trust(dev, b.get("fingerprint", "")) or {"ok": True},
+            "connect": lambda: {"facts": devmgr.connect(dev, b.get("creds") or {})},
+            "disconnect": lambda: devmgr.disconnect(dev) or {"ok": True},
+            "backup": lambda: devmgr.take_backup(dev, "manual"),
+            "preview": lambda: devmgr.preview(dev, str(b.get("wizard", "")), b.get("params") or {}),
+        }
+        if what not in calls:
+            return self._send(404, {"error": "not found"})
+        return self._device_call(calls[what])
+
+
+def _wrap(v):
+    return v if isinstance(v, dict) else {"items": v}
 
 
 # ── control panel page ───────────────────────────────────────────────────────

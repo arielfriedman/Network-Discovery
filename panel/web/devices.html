@@ -1,1 +1,430 @@
-<!DOCTYPE html><html><head><meta charset="utf-8"><link rel="stylesheet" href="/web/style.css"><script src="/web/common.js" defer></script></head><body><div class="wrap"><header><h1>Devices</h1></header></div></body></html>
+<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SentinelScan Devices</title>
+<link rel="stylesheet" href="/web/style.css">
+<script src="/web/common.js" defer></script>
+<style>
+  .grid{display:grid;gap:12px;grid-template-columns:repeat(auto-fill,minmax(250px,1fr))}
+  .dev{cursor:pointer;transition:border-color .12s}
+  .dev:hover{border-color:var(--series-1)}
+  .dev .n{font-weight:600;font-size:15px}
+  .dev .m{color:var(--text-muted);font-size:12.5px;margin-top:2px}
+  .dev .s{margin-top:10px;font-size:12.5px;color:var(--text-secondary)}
+  .dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--text-muted);margin-right:6px;vertical-align:1px}
+  .dot.on{background:var(--good)}
+  .form{display:grid;gap:12px;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));margin-top:6px}
+  .form .field{display:flex;flex-direction:column;gap:4px}
+  .form .field.wide{grid-column:1/-1}
+  .form label{font-size:11.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--text-muted)}
+  .form .help{font-size:12px;color:var(--text-muted)}
+  .form select,.form input,.form textarea{width:100%;min-width:0}
+  textarea{background:var(--plane);color:var(--text-primary);border:1px solid var(--border);border-radius:8px;
+    padding:8px 11px;font:13px/1.45 ui-monospace,Menlo,Consolas,monospace;min-height:90px}
+  .checks{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:13.5px}
+  .checks label{text-transform:none;letter-spacing:0;font-size:13.5px;color:var(--text-primary);display:flex;gap:6px;align-items:center}
+  .checks input{min-width:0;width:auto}
+  .cb{display:flex;gap:8px;align-items:flex-start;font-size:13.5px}
+  .cb input{min-width:0;width:auto;margin-top:3px}
+  .subtabs{display:flex;gap:4px;border-bottom:1px solid var(--border);margin:18px 0 14px;flex-wrap:wrap}
+  .subtabs button{background:none;border:none;border-bottom:2px solid transparent;padding:8px 12px;font:inherit;
+    font-size:14px;color:var(--text-secondary);cursor:pointer;margin-bottom:-1px}
+  .subtabs button.on{border-bottom-color:var(--series-1);color:var(--text-primary);font-weight:600}
+  .wz-list{display:grid;gap:10px;grid-template-columns:repeat(auto-fill,minmax(240px,1fr))}
+  .wz{cursor:pointer}.wz:hover{border-color:var(--series-1)}
+  .wz .g{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted)}
+  .wz .t{font-weight:600;margin:2px 0 4px}.wz .d{font-size:12.5px;color:var(--text-secondary)}
+  pre.plan{background:var(--plane);border:1px solid var(--border);border-radius:8px;padding:12px 14px;
+    white-space:pre-wrap;font:12.5px/1.5 ui-monospace,Menlo,Consolas,monospace;max-height:420px;overflow:auto;margin:6px 0 0}
+  .fp{font:13px/1.6 ui-monospace,Menlo,Consolas,monospace;word-break:break-all;background:var(--plane);
+    border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin:8px 0}
+  .warnbox{border-left:3px solid var(--critical)!important}
+  .okbox{border-left:3px solid var(--good)!important}
+  .res{font-size:13.5px;margin:4px 0}.res .ok{color:var(--good);font-weight:700}.res .bad{color:var(--critical);font-weight:700}
+  .err{color:var(--critical);font-size:13.5px;margin-top:8px;white-space:pre-wrap}
+  .muted{color:var(--text-muted)}
+  .hide{display:none!important}
+  details.help summary{cursor:pointer;color:var(--text-secondary);font-size:13.5px;margin-top:10px}
+  details.help pre{white-space:pre-wrap;font:12.5px/1.5 ui-monospace,Menlo,Consolas,monospace;color:var(--text-secondary)}
+</style>
+</head>
+<body><div class="wrap">
+  <header><h1>Devices</h1>
+    <div class="sub">Connect to your firewalls, switches and routers, back up their configuration and run guided changes.
+      Every change shows the exact commands first, takes a backup, and can be rolled back.</div>
+  </header>
+  <div id="nodb" class="note hide"></div>
+
+  <!-- device list -->
+  <section id="listView">
+    <div class="row" style="margin-top:18px"><button class="btn" id="addBtn">Add device</button></div>
+    <div id="addCard" class="card hide" style="margin-top:14px">
+      <div class="form" id="addForm">
+        <div class="field"><label>Vendor</label><select id="aVendor"></select></div>
+        <div class="field"><label>Type</label><select id="aFamily"></select></div>
+        <div class="field"><label>Model</label><select id="aModel"></select></div>
+        <div class="field"><label>Name</label><input id="aName" placeholder="e.g. FW-HQ"></div>
+        <div class="field"><label>Address</label><input id="aAddr" placeholder="IP or host name"></div>
+        <div class="field"><label>Port</label><input id="aPort" inputmode="numeric"></div>
+        <div class="field wide help" id="aInfo"></div>
+      </div>
+      <div class="row" style="margin-top:14px"><button class="btn" id="aSave">Add</button>
+        <button class="btn ghost" id="aCancel">Cancel</button></div>
+      <div class="err" id="aErr"></div>
+    </div>
+    <h2>Your devices</h2>
+    <div class="grid" id="devGrid"><div class="empty">Loading…</div></div>
+    <p class="muted" style="font-size:13px;margin-top:18px">No equipment to try this on? Run the simulated lab:
+      <code>cd panel &amp;&amp; python3 -m devices.lab</code>, then add the devices it lists.</p>
+  </section>
+
+  <!-- one device -->
+  <section id="devView" class="hide">
+    <div class="row" style="margin-top:18px">
+      <button class="btn ghost" id="backBtn">← All devices</button>
+    </div>
+    <div id="dHead" style="font-size:22px;font-weight:700;margin:18px 0 2px;letter-spacing:-.01em"></div>
+    <div class="row" style="margin-top:-4px">
+      <span id="dSub" class="muted"></span><span style="flex:1"></span>
+      <button class="btn ghost hide" id="discBtn">Disconnect</button>
+      <button class="btn ghost" id="delBtn">Remove device</button>
+    </div>
+
+    <!-- connect -->
+    <div class="card" id="connCard" style="margin-top:14px">
+      <div style="font-weight:600">Connect</div>
+      <div class="muted" style="font-size:13px" id="connApi"></div>
+      <div class="form" id="credForm"></div>
+      <div class="row" style="margin-top:14px"><button class="btn" id="connBtn">Connect</button></div>
+      <div id="pinBox"></div>
+      <div class="err" id="connErr"></div>
+      <details class="help"><summary>How to prepare this device for SentinelScan</summary><pre id="vendorHelp"></pre></details>
+    </div>
+
+    <div id="ws" class="hide">
+      <div class="subtabs" id="subtabs">
+        <button data-t="overview" class="on">Overview</button><button data-t="wizards">Wizards</button>
+        <button data-t="changes">Changes</button><button data-t="backups">Backups</button>
+      </div>
+
+      <div data-p="overview">
+        <div class="kpis" id="facts"></div>
+        <h2>Interfaces</h2>
+        <div class="tbl-wrap"><table class="data"><thead><tr><th>Name</th><th>Address</th><th>Status</th><th>Description</th></tr></thead>
+          <tbody id="ifRows"></tbody></table></div>
+      </div>
+
+      <div data-p="wizards" class="hide">
+        <div id="wzPick"><div class="wz-list" id="wzList"></div></div>
+        <div id="wzRun" class="hide">
+          <div class="row"><button class="btn ghost" id="wzBack">← All wizards</button></div>
+          <h2 id="wzTitle"></h2><div class="muted" id="wzSum" style="margin:-6px 0 10px"></div>
+          <div class="card"><div class="form" id="wzForm"></div>
+            <div class="row" style="margin-top:14px"><button class="btn" id="pvBtn">Preview changes</button></div>
+            <div class="err" id="wzErr"></div></div>
+          <div id="planBox" class="hide">
+            <h2>What will be sent</h2>
+            <div class="note" id="planSum"></div>
+            <div id="planNotes"></div>
+            <pre class="plan" id="planText"></pre>
+            <details class="help"><summary>Undo steps (used by Rollback)</summary><pre class="plan" id="undoText"></pre></details>
+            <div class="row" style="margin-top:14px">
+              <button class="btn danger" id="applyBtn">Back up, then apply</button>
+              <button class="btn ghost" id="cancelPlan">Cancel</button>
+            </div>
+            <div id="applyOut"></div>
+          </div>
+        </div>
+      </div>
+
+      <div data-p="changes" class="hide">
+        <div class="tbl-wrap"><table class="data"><thead><tr><th>When</th><th>Wizard</th><th>Summary</th><th>Status</th><th></th></tr></thead>
+          <tbody id="chRows"></tbody></table></div>
+      </div>
+
+      <div data-p="backups" class="hide">
+        <div class="row"><button class="btn" id="bkBtn">Back up now</button><span class="muted" id="bkMsg"></span></div>
+        <div class="tbl-wrap" style="margin-top:12px"><table class="data"><thead><tr><th>When</th><th>Reason</th><th class="num">Size</th><th>SHA-256</th><th></th></tr></thead>
+          <tbody id="bkRows"></tbody></table></div>
+      </div>
+    </div>
+  </section>
+</div>
+<script>
+document.addEventListener("DOMContentLoaded", () => {
+  const $ = id => document.getElementById(id);
+  const show = (el, on) => el.classList.toggle("hide", !on);
+  let VENDORS = [], DEV = null, WIZ = [], CUR_WZ = null, PLAN = null;
+
+  // ── vendors / add form ──────────────────────────────────────────────────
+  const vendor = k => VENDORS.find(v => v.key === k);
+  const family = (v, f) => (vendor(v) || { families: [] }).families.find(x => x.key === f);
+  function fillAdd() {
+    $("aVendor").innerHTML = VENDORS.map(v => `<option value="${v.key}" ${v.available ? "" : "disabled"}>${esc(v.label)}${v.available ? "" : " (not available)"}</option>`).join("");
+    onVendor();
+  }
+  function onVendor() {
+    const v = vendor($("aVendor").value); if (!v) return;
+    $("aFamily").innerHTML = v.families.map(f => `<option value="${f.key}">${esc(f.label)}</option>`).join("");
+    onFamily();
+  }
+  function onFamily() {
+    const f = family($("aVendor").value, $("aFamily").value); if (!f) return;
+    $("aModel").innerHTML = f.models.map(m => `<option>${esc(m.name)}</option>`).join("");
+    $("aPort").value = f.port; onModel();
+  }
+  function onModel() {
+    const f = family($("aVendor").value, $("aFamily").value);
+    const m = f && f.models.find(x => x.name === $("aModel").value);
+    $("aInfo").innerHTML = f ? `<b>Managed through:</b> ${esc(f.api)}` + (m && m.ports ? `<br><b>Ports:</b> ${esc(m.ports)}` : "") +
+      (m && m.note ? `<br><b>Note:</b> ${esc(m.note)}` : "") + (f.setup ? `<br><b>Before you start:</b> ${esc(f.setup)}` : "") : "";
+  }
+  $("aVendor").onchange = onVendor; $("aFamily").onchange = onFamily; $("aModel").onchange = onModel;
+  $("addBtn").onclick = () => { show($("addCard"), true); $("aErr").textContent = ""; };
+  $("aCancel").onclick = () => show($("addCard"), false);
+  $("aSave").onclick = async () => {
+    $("aErr").textContent = "";
+    try {
+      const r = await api("/api/devices", { vendor: $("aVendor").value, family: $("aFamily").value, model: $("aModel").value,
+        name: $("aName").value, address: $("aAddr").value, port: $("aPort").value });
+      show($("addCard"), false); $("aName").value = $("aAddr").value = "";
+      await loadList(); openDevice(r.id);
+    } catch (e) { $("aErr").textContent = e.message; }
+  };
+
+  // ── list ────────────────────────────────────────────────────────────────
+  async function loadList() {
+    let r;
+    try { r = await api("/api/devices"); }
+    catch (e) {
+      show($("nodb"), true); $("nodb").textContent = e.message; $("devGrid").innerHTML = ""; show($("addBtn"), false); return;
+    }
+    $("devGrid").innerHTML = r.devices.length ? r.devices.map(d => `
+      <div class="card dev" data-id="${d.id}"><div class="n"><span class="dot ${d.connected ? "on" : ""}"></span>${esc(d.name)}</div>
+        <div class="m">${esc((vendor(d.vendor) || {}).label || d.vendor)} · ${esc(d.model || "")}</div>
+        <div class="m">${esc(d.address)}${d.port ? ":" + d.port : ""}${d.facts && d.facts.version ? " · " + esc(d.facts.version) : ""}</div>
+        <div class="s">${d.connected ? "Connected" : "Not connected"} · ${d.last_backup ? "backed up " + esc(fmtTime(d.last_backup)) : "no backup yet"}
+          · ${d.changes} change(s)</div></div>`).join("")
+      : '<div class="empty">No devices yet. Click <b>Add device</b>.</div>';
+    document.querySelectorAll(".dev").forEach(el => el.onclick = () => openDevice(+el.dataset.id));
+  }
+
+  // ── one device ──────────────────────────────────────────────────────────
+  async function openDevice(id, tab, wz) {
+    DEV = await api(`/api/devices/${id}`);
+    show($("listView"), false); show($("devView"), true);
+    const v = vendor(DEV.vendor) || { families: [] }, f = family(DEV.vendor, DEV.family) || { auth: [], api: "" };
+    $("dHead").textContent = DEV.name;
+    $("dSub").textContent = `${v.label || DEV.vendor} · ${DEV.model || ""} · ${DEV.address}${DEV.port ? ":" + DEV.port : ""}`;
+    $("connApi").textContent = f.api;
+    $("vendorHelp").textContent = v.help || "";
+    $("credForm").innerHTML = f.auth.map(a => `<div class="field"><label>${esc(a.label)}${a.required ? "" : " (optional)"}</label>
+      <input data-k="${a.name}" type="${a.type === "password" ? "password" : "text"}" value="${esc(a.default || "")}" autocomplete="off">
+      ${a.help ? `<span class="help">${esc(a.help)}</span>` : ""}</div>`).join("");
+    $("pinBox").innerHTML = ""; $("connErr").textContent = "";
+    setConnected(DEV.connected, tab, wz);
+  }
+  function setConnected(on, tab, wz) {
+    show($("ws"), on); show($("discBtn"), on); show($("connCard"), !on);
+    if (on) selectTab(tab || "overview", wz);
+  }
+  const creds = () => { const c = {}; $("credForm").querySelectorAll("input").forEach(i => c[i.dataset.k] = i.value); return c; };
+  async function doConnect() {
+    $("connErr").textContent = ""; $("pinBox").innerHTML = ""; $("connBtn").disabled = true; $("connBtn").textContent = "Connecting…";
+    try {
+      await api(`/api/devices/${DEV.id}/connect`, { creds: creds() });
+      $("credForm").querySelectorAll('input[type=password]').forEach(i => i.value = "");
+      DEV.connected = true; setConnected(true); loadOverview();
+    } catch (e) {
+      if (e.data && (e.data.pin_required || e.data.pin_mismatch)) pinPrompt(e.data);
+      else $("connErr").textContent = e.message;
+    } finally { $("connBtn").disabled = false; $("connBtn").textContent = "Connect"; }
+  }
+  function pinPrompt(d) {
+    const fp = d.pin_required || d.pin_mismatch, changed = !!d.pin_mismatch;
+    $("pinBox").innerHTML = `<div class="note ${changed ? "warnbox" : ""}" style="margin-top:14px">
+      ${changed ? `<b>Warning: the device's ${esc(d.kind)} has changed.</b> Nothing was sent to it. This is expected after a firmware
+        upgrade, certificate renewal or factory reset. If none of those happened, someone may be impersonating the device: do not continue.`
+      : `<b>First connection.</b> Before any password or token is sent, confirm this is your device. Compare the ${esc(d.kind)} fingerprint
+        below with the one the device shows (in its web UI certificate details, or on the console).`}
+      <div class="fp">${esc(fp)}</div>
+      ${changed ? '<div class="cb"><input type="checkbox" id="pinAck"><label for="pinAck">I know why it changed and I trust the new fingerprint</label></div>' : ""}
+      <div class="row" style="margin-top:10px"><button class="btn ${changed ? "danger" : ""}" id="pinOk">Trust this fingerprint and connect</button></div></div>`;
+    $("pinOk").onclick = async () => {
+      if (changed && !$("pinAck").checked) { $("connErr").textContent = "Tick the box to confirm."; return; }
+      try { await api(`/api/devices/${DEV.id}/trust`, { fingerprint: fp }); $("pinBox").innerHTML = ""; doConnect(); }
+      catch (e) { $("connErr").textContent = e.message; }
+    };
+  }
+  $("connBtn").onclick = doConnect;
+  $("credForm").addEventListener("keydown", e => { if (e.key === "Enter") doConnect(); });
+  $("discBtn").onclick = async () => { await api(`/api/devices/${DEV.id}/disconnect`, {}); DEV.connected = false; setConnected(false); };
+  $("delBtn").onclick = async () => {
+    if (!confirm(`Remove ${DEV.name} from SentinelScan? Its saved backups and change history are deleted too. The device itself is not touched.`)) return;
+    await api(`/api/devices/${DEV.id}/delete`, {}); backToList();
+  };
+  function backToList() { show($("devView"), false); show($("listView"), true); DEV = null; history.replaceState(null, "", "/devices"); loadList(); }
+  $("backBtn").onclick = backToList;
+
+  // ── sub tabs ────────────────────────────────────────────────────────────
+  const TABS = { overview: () => loadOverview(), wizards: wz => loadWizards(wz), changes: () => loadChanges(), backups: () => loadBackups() };
+  function selectTab(t, wz) {
+    if (!TABS[t]) t = "overview";
+    document.querySelectorAll("#subtabs button").forEach(b => b.classList.toggle("on", b.dataset.t === t));
+    document.querySelectorAll("[data-p]").forEach(p => show(p, p.dataset.p === t));
+    history.replaceState(null, "", `#${DEV.id}/${t}${wz ? "/" + wz : ""}`);
+    TABS[t](wz);
+  }
+  document.querySelectorAll("#subtabs button").forEach(b => b.onclick = () => selectTab(b.dataset.t));
+
+  async function guarded(fn) {
+    try { await fn(); }
+    catch (e) { if (/Not connected/.test(e.message)) { DEV.connected = false; setConnected(false); $("connErr").textContent = "The session ended. Connect again."; } else alert(e.message); }
+  }
+  function loadOverview() {
+    return guarded(async () => {
+      const o = await api(`/api/devices/${DEV.id}/overview`);
+      const f = o.facts;
+      $("facts").innerHTML = [["hostname", "Hostname"], ["model", "Model"], ["version", "Version"], ["serial", "Serial"], ["uptime", "Uptime"]]
+        .filter(([k]) => f[k]).map(([k, l]) => `<div class="kpi"><div class="v" style="font-size:16px">${esc(f[k])}</div><div class="l">${l}</div></div>`).join("");
+      $("ifRows").innerHTML = o.interfaces.map(i => `<tr><td><code>${esc(i.name)}</code></td><td>${esc(i.ip || "")}</td>
+        <td>${esc(i.status || "")}</td><td>${esc(i.description || "")}</td></tr>`).join("") || '<tr><td colspan="4" class="empty">No interfaces reported.</td></tr>';
+    });
+  }
+
+  // ── wizards ─────────────────────────────────────────────────────────────
+  function loadWizards(open) {
+    show($("wzPick"), true); show($("wzRun"), false);
+    return guarded(async () => {
+      WIZ = (await api(`/api/devices/${DEV.id}/wizards`)).items;
+      $("wzList").innerHTML = WIZ.map(w => `<div class="card wz" data-id="${w.id}"><div class="g">${esc(w.group)}</div>
+        <div class="t">${esc(w.title)}</div><div class="d">${esc(w.summary)}</div></div>`).join("");
+      document.querySelectorAll(".wz").forEach(el => el.onclick = () => openWizard(el.dataset.id));
+      if (open && WIZ.some(w => w.id === open)) openWizard(open);
+    });
+  }
+  function fieldHtml(f) {
+    const id = "f_" + f.name, req = f.required && f.type !== "checkbox" ? "" : " (optional)";
+    const lab = `<label for="${id}">${esc(f.label)}${f.type === "checkbox" ? "" : req}</label>`;
+    const help = f.help ? `<span class="help">${esc(f.help)}</span>` : "";
+    if (f.type === "checkbox")
+      return `<div class="field wide"><div class="cb"><input type="checkbox" id="${id}" data-k="${f.name}" ${f.default ? "checked" : ""}>${lab}</div>${help}</div>`;
+    if (f.type === "select") {
+      const blank = !f.required ? '<option value=""></option>' : f.source === "interfaces" && !f.default ? '<option value="">choose…</option>' : "";
+      const opts = blank + f.options.map(([v, t]) => `<option value="${esc(v)}" ${String(v) === String(f.default) ? "selected" : ""}>${esc(t)}</option>`).join("");
+      return `<div class="field">${lab}<select id="${id}" data-k="${f.name}">${opts}</select>${help}</div>`;
+    }
+    if (f.type === "multiselect") {
+      const def = new Set([].concat(f.default || []));
+      return `<div class="field wide">${lab}<div class="checks" data-k="${f.name}" data-multi="1">` +
+        f.options.map(([v, t]) => `<label><input type="checkbox" value="${esc(v)}" ${def.has(v) ? "checked" : ""}>${esc(t)}</label>`).join("") + `</div>${help}</div>`;
+    }
+    if (f.type === "textarea")
+      return `<div class="field wide">${lab}<textarea id="${id}" data-k="${f.name}" placeholder="${esc(f.placeholder)}">${esc(f.default)}</textarea>${help}</div>`;
+    return `<div class="field">${lab}<input id="${id}" data-k="${f.name}" type="${f.type === "number" ? "text" : f.type === "password" ? "password" : "text"}"
+      ${f.type === "number" ? 'inputmode="numeric"' : ""} value="${esc(f.default)}" placeholder="${esc(f.placeholder)}" autocomplete="off">${help}</div>`;
+  }
+  function openWizard(id) {
+    CUR_WZ = WIZ.find(w => w.id === id); PLAN = null;
+    show($("wzPick"), false); show($("wzRun"), true); show($("planBox"), false);
+    $("wzTitle").textContent = CUR_WZ.title; $("wzSum").textContent = CUR_WZ.summary;
+    $("wzForm").innerHTML = CUR_WZ.fields.map(fieldHtml).join(""); $("wzErr").textContent = "";
+    history.replaceState(null, "", `#${DEV.id}/wizards/${id}`);
+  }
+  function params() {
+    const p = {};
+    $("wzForm").querySelectorAll("[data-k]").forEach(el => {
+      if (el.dataset.multi) p[el.dataset.k] = [...el.querySelectorAll("input:checked")].map(i => i.value);
+      else if (el.type === "checkbox") p[el.dataset.k] = el.checked;
+      else p[el.dataset.k] = el.value;
+    });
+    return p;
+  }
+  $("wzBack").onclick = () => { history.replaceState(null, "", `#${DEV.id}/wizards`); loadWizards(); };
+  $("pvBtn").onclick = async () => {
+    $("wzErr").textContent = ""; show($("planBox"), false); $("pvBtn").disabled = true;
+    try {
+      PLAN = await api(`/api/devices/${DEV.id}/preview`, { wizard: CUR_WZ.id, params: params() });
+      $("planSum").textContent = PLAN.summary;
+      $("planNotes").innerHTML = PLAN.notes.map(n => `<div class="note warnbox">${esc(n)}</div>`).join("");
+      $("planText").textContent = PLAN.text + (PLAN.commit ? "\n\n# then: commit / publish" : "");
+      $("undoText").textContent = PLAN.undo.length ? PLAN.undo.map(s => `# ${s.title}\n${s.text}`).join("\n\n") : "No automatic undo for this change; restore the backup instead.";
+      $("applyOut").innerHTML = ""; show($("planBox"), true); $("applyBtn").disabled = false;
+      $("planBox").scrollIntoView({ behavior: "smooth", block: "start" });
+    } catch (e) { $("wzErr").textContent = e.message; }
+    finally { $("pvBtn").disabled = false; }
+  };
+  $("cancelPlan").onclick = () => { PLAN = null; show($("planBox"), false); };
+  function results(r) {
+    return r.results.map(x => `<div class="res"><span class="${x.ok ? "ok" : "bad"}">${x.ok ? "✓" : "✗"}</span> ${esc(x.step)}
+      ${x.detail ? `<span class="muted"> - ${esc(x.detail)}</span>` : ""}</div>`).join("");
+  }
+  async function doApply(skipBackup) {
+    if (!PLAN) return;
+    $("applyBtn").disabled = true; $("applyOut").innerHTML = '<div class="muted" style="margin-top:10px">Backing up, then applying…</div>';
+    try {
+      const r = await api("/api/devices/apply", { plan_id: PLAN.plan_id, skip_backup: !!skipBackup });
+      PLAN = null;
+      $("applyOut").innerHTML = `<div class="note ${r.ok ? "okbox" : "warnbox"}" style="margin-top:12px">
+        <b>${r.ok ? "Applied." : "Failed. Steps before the failure were applied."}</b>
+        ${r.backup_id ? ` Backup #${r.backup_id} was taken first.` : " No backup was taken."}${results(r)}
+        ${r.can_undo ? `<div class="row" style="margin-top:10px"><button class="btn ghost" id="rbNow">Roll back this change</button></div>` : ""}</div>`;
+      if (r.can_undo) $("rbNow").onclick = () => rollback(r.change_id, $("applyOut"));
+    } catch (e) {
+      $("applyBtn").disabled = false;
+      const backupFailed = /back up/i.test(e.message);
+      $("applyOut").innerHTML = `<div class="err">${esc(e.message)}</div>` + (backupFailed ?
+        '<div class="row" style="margin-top:8px"><button class="btn ghost" id="noBk">Apply without a backup</button></div>' : "");
+      if (backupFailed) $("noBk").onclick = () => { if (confirm("Apply without a backup? You will only have the undo steps to go back.")) doApply(true); };
+    }
+  }
+  $("applyBtn").onclick = () => doApply(false);
+
+  async function rollback(id, box) {
+    if (!confirm("Run the undo steps for this change now?")) return;
+    try {
+      const r = await api(`/api/devices/changes/${id}/rollback`, {});
+      box.insertAdjacentHTML("beforeend", `<div class="note ${r.ok ? "okbox" : "warnbox"}" style="margin-top:10px">
+        <b>${r.ok ? "Rolled back." : "Rollback did not complete."}</b>${results(r)}</div>`);
+      if (!$("ws").classList.contains("hide") && !document.querySelector('[data-p="changes"]').classList.contains("hide")) loadChanges();
+    } catch (e) { alert(e.message); }
+  }
+
+  // ── changes / backups ───────────────────────────────────────────────────
+  function loadChanges() {
+    return guarded(async () => {
+      const rows = (await api(`/api/devices/${DEV.id}/changes`)).items;
+      $("chRows").innerHTML = rows.length ? rows.map(c => `<tr><td>${esc(fmtTime(c.created_at))}</td><td><code>${esc(c.wizard)}</code></td>
+        <td>${esc(c.summary || "")}<details class="help"><summary>commands</summary><pre class="plan">${esc(c.commands)}</pre></details></td>
+        <td>${esc(c.status.replace("_", " "))}</td>
+        <td>${c.can_undo && (c.status === "applied" || c.status === "failed") ? `<button class="btn ghost" data-rb="${c.id}">Roll back</button>` : ""}
+            ${c.backup_id ? `<a class="btn ghost" href="/api/devices/backups/${c.backup_id}/download">Backup before</a>` : ""}</td></tr>`).join("")
+        : '<tr><td colspan="5" class="empty">No changes made through SentinelScan yet.</td></tr>';
+      document.querySelectorAll("[data-rb]").forEach(b => b.onclick = () => rollback(+b.dataset.rb, $("chRows").parentElement.parentElement));
+    });
+  }
+  function loadBackups() {
+    return guarded(async () => {
+      const rows = (await api(`/api/devices/${DEV.id}/backups`)).items;
+      $("bkRows").innerHTML = rows.length ? rows.map(b => `<tr><td>${esc(fmtTime(b.taken_at))}</td><td>${esc(b.reason || "")}</td>
+        <td class="num">${(b.bytes / 1024).toFixed(1)} KB</td><td><code title="${esc(b.sha256)}">${esc(b.sha256.slice(0, 12))}…</code></td>
+        <td><a class="btn ghost" href="/api/devices/backups/${b.id}/download">Download</a></td></tr>`).join("")
+        : '<tr><td colspan="5" class="empty">No backups yet.</td></tr>';
+    });
+  }
+  $("bkBtn").onclick = () => guarded(async () => {
+    $("bkBtn").disabled = true; $("bkMsg").textContent = " backing up…";
+    try { const b = await api(`/api/devices/${DEV.id}/backup`, {}); $("bkMsg").textContent = ` saved (${(b.bytes / 1024).toFixed(1)} KB)`; loadBackups(); }
+    finally { $("bkBtn").disabled = false; }
+  });
+
+  // ── start ───────────────────────────────────────────────────────────────
+  api("/api/devices/vendors").then(v => { VENDORS = v; fillAdd(); return loadList(); })
+    .then(() => {
+      const [id, tab, wz] = location.hash.slice(1).split("/");
+      if (+id) openDevice(+id, tab, wz).catch(() => {});
+    })
+    .catch(e => { show($("nodb"), true); $("nodb").textContent = e.message; });
+});
+</script>
+</body></html>
