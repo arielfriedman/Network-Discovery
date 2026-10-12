@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SentinelScan</title>
+<link rel="stylesheet" href="/web/style.css">
+<script src="/web/common.js" defer></script></head>
+<body><div class="wrap">
+  <header><h1>Scan</h1>
+    <div class="sub">Choose what to scan, then start. Everything runs locally on this machine.</div>
+  </header>
+
+  <div id="setup">
+    <h2>What do you want to scan?</h2>
+    <div class="scopes" id="scopes">
+      <div class="scope on" data-scope="host">
+        <div class="t">This host</div>
+        <div class="d">Audit this machine's own security: ports, firewall, SSH, hardening, users, updates and more.</div></div>
+      <div class="scope" data-scope="network">
+        <div class="t">The network</div>
+        <div class="d">Find the devices and services on your LAN, using the network-discovery tool.</div></div>
+      <div class="scope" data-scope="cloud">
+        <div class="t">The cloud</div>
+        <div class="d">List AWS, Azure, GCP and Kubernetes resources. Needs a cloud CLI that is signed in.</div></div>
+    </div>
+
+    <div class="opts" id="opts"></div>
+    <div class="ready" id="ready"></div>
+
+    <div class="go">
+      <button class="start" id="startBtn">Start scan</button>
+    </div>
+  </div>
+
+  <div id="run">
+    <h2 id="runTitle">Scanning</h2>
+    <div class="now" id="now">
+      <div class="now-top">
+        <span class="now-mod" id="nowMod">Starting…</span>
+        <span class="now-pct" id="nowPct">0%</span>
+      </div>
+      <div class="now-act" id="nowAct"></div>
+      <div class="now-cmd" id="nowCmd"><span class="dotpulse"></span><span id="nowCmdText">preparing…</span></div>
+    </div>
+    <div class="bar"><span id="barFill"></span></div>
+    <div class="note" id="noteBox" style="display:none"></div>
+    <div class="go" id="stopRow"><button class="stop" id="stopBtn">Stop scan</button></div>
+    <div class="log-h">Live activity log: every check and command as it runs</div>
+    <div class="log" id="logBox"></div>
+    <div class="done-bar" id="doneBar">
+      <a id="viewBtn" href="#">Open dashboard</a>
+      <a id="jsonBtn" class="ghost" href="#">Download JSON</a>
+      <button class="ghost" id="againBtn">New scan</button>
+    </div>
+    <iframe id="frame" style="display:none"></iframe>
+  </div>
+</div>
+<script>
+document.addEventListener("DOMContentLoaded",function(){
+  const $=id=>document.getElementById(id);
+  let scope="host", ENV=null;
+  const PROV={all:"All installed",aws:"AWS",azure:"Azure",gcp:"Google Cloud",k8s:"Kubernetes"};
+  function opts(){
+    if(scope==="host") return [["mode","Mode",[["workstation","Workstation (this PC / laptop)"],["server","Server (hosts services)"]]],
+                               ["scan_type","Depth",[["quick","Quick"],["full","Full (all ports, slower)"]]]];
+    if(scope==="network") return [["scan_type","Depth",[["quick","Quick (find devices, minutes)"],["full","Full (per-device port scan, can take hours)"]]]];
+    return [["provider","Provider",Object.keys(PROV).map(k=>
+      [k, PROV[k]+(k!=="all"&&ENV&&!ENV.clouds[k]?" (not installed)":"")])]];
+  }
+  function renderOpts(){
+    $("opts").innerHTML=opts().map(([k,label,vals])=>
+      `<div class="field"><label>${label}</label><select data-k="${k}">`+
+      vals.map(([v,t])=>`<option value="${v}">${t}</option>`).join("")+`</select></div>`).join("");
+    renderReady();
+  }
+  function renderReady(){
+    const box=$("ready"); let lines=[], ok=true;
+    if(!ENV){ box.innerHTML='<span class="muted">Checking this machine…</span>'; return; }
+    const admin=ENV.admin
+      ? '<span class="ok">✓</span> Admin rights available.'
+      : '<span class="warn">!</span> No admin rights. Scans run, but checks that need root see less. To include them, stop the panel and start it with <code>sudo python3 serve.py</code>.';
+    if(scope==="host"){ lines.push('<span class="ok">✓</span> Ready.'); lines.push(admin); }
+    if(scope==="network"){
+      if(!ENV.nd_tool){ ok=false; lines.push('<span class="bad">✗</span> network-discovery tool not found in <code>discovery/</code> next to the panel.'); }
+      else lines.push('<span class="ok">✓</span> network-discovery tool found.');
+      lines.push(ENV.admin?admin:'<span class="warn">!</span> No admin rights: the ARP sweep and OS detection will be skipped. Device and port discovery still run.');
+    }
+    if(scope==="cloud"){
+      const have=Object.keys(ENV.clouds).filter(k=>ENV.clouds[k]);
+      if(!have.length){ lines.push('<span class="bad">✗</span> No cloud tool is installed (aws, az, gcloud, kubectl), so a cloud scan will find nothing. Install one and sign in first.'); }
+      else lines.push('<span class="ok">✓</span> Installed: '+have.map(k=>PROV[k]).join(", ")+'. They must also be signed in.');
+    }
+    box.innerHTML=lines.map(l=>`<div>${l}</div>`).join("");
+    $("startBtn").disabled=!ok;
+  }
+  document.querySelectorAll(".scope").forEach(el=>el.onclick=()=>{
+    document.querySelectorAll(".scope").forEach(s=>s.classList.remove("on"));
+    el.classList.add("on"); scope=el.dataset.scope; renderOpts();
+  });
+  renderOpts();
+  fetch("/api/env").then(r=>r.json()).then(e=>{ENV=e; renderOpts();}).catch(()=>{});
+
+  let pollTimer=null, curId=null;
+  $("startBtn").onclick=async()=>{
+    const o={scope};
+    $("opts").querySelectorAll("select").forEach(s=>o[s.dataset.k]=s.value);
+    $("startBtn").disabled=true;
+    const r=await fetch("/api/scan/start",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(o)});
+    const j=await r.json(); curId=j.scan_id;
+    $("setup").style.display="none"; $("run").style.display="block";
+    $("runTitle").textContent="Scanning";
+    $("doneBar").style.display="none"; $("frame").style.display="none";
+    $("noteBox").style.display="none"; $("nowCmd").style.display="flex";
+    $("stopRow").style.display="flex"; $("stopBtn").disabled=false; $("stopBtn").textContent="Stop scan";
+    $("barFill").style.width="0%"; $("logBox").textContent="";
+    poll();
+  };
+  $("stopBtn").onclick=async()=>{
+    if(!curId) return;
+    $("stopBtn").disabled=true; $("stopBtn").textContent="Stopping…";
+    await fetch(`/api/scan/${curId}/stop`,{method:"POST"});
+  };
+  async function poll(){
+    if(!curId)return;
+    let s;
+    try{ s=await (await fetch(`/api/scan/${curId}/status`)).json(); }
+    catch(e){ $("nowMod").textContent="Lost contact with the panel. Is serve.py still running?"; pollTimer=setTimeout(poll,2000); return; }
+    $("barFill").style.width=(s.pct||0)+"%";
+    $("nowPct").textContent=(s.pct||0)+"%";
+    $("nowMod").textContent=s.module||s.current||s.status;
+    $("nowAct").textContent=s.activity||"";
+    $("nowCmdText").textContent=s.cmd||(s.status==="running"?"working…":"");
+    if(s.note){ $("noteBox").textContent=s.note; $("noteBox").style.display="block"; }
+    $("logBox").textContent=(s.log||[]).join("\n"); $("logBox").scrollTop=1e9;
+    if(s.status==="running"){ pollTimer=setTimeout(poll,1000); return; }
+
+    // finished: complete, cancelled (stopped) or error
+    $("stopRow").style.display="none"; $("nowCmd").style.display="none"; $("nowAct").textContent="";
+    $("runTitle").textContent = s.status==="complete"?"Finished":s.status==="cancelled"?"Stopped":"Failed";
+    $("nowMod").textContent=s.current||s.status;
+    if(s.status==="complete"){ $("nowPct").textContent="100%"; $("barFill").style.width="100%"; }
+    $("doneBar").style.display="flex";
+    $("viewBtn").style.display=s.has_result?"inline-block":"none";
+    $("jsonBtn").style.display=s.has_json?"inline-block":"none";
+    if(s.has_result){
+      $("viewBtn").href=`/results/${curId}`; $("viewBtn").target="_blank";
+      $("jsonBtn").href=`/api/scan/${curId}/json`;
+      $("frame").src=`/results/${curId}`; $("frame").style.display="block";
+    }
+  }
+  $("againBtn").onclick=()=>{ if(pollTimer)clearTimeout(pollTimer); curId=null;
+    $("run").style.display="none"; $("setup").style.display="block"; renderReady(); };
+});
+</script>
+</body></html>

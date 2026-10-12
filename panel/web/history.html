@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SentinelScan History</title>
+<link rel="stylesheet" href="/web/style.css">
+<script src="/web/common.js" defer></script>
+</head>
+<body><div class="wrap">
+  <header><h1>History</h1>
+    <div class="sub">Every scan saved in the database: what changed since last time, and who did what.</div>
+  </header>
+
+  <div id="nodb" class="note" style="display:none"></div>
+
+  <div id="list">
+    <h2>Scans</h2>
+    <div class="tbl-wrap"><table class="data">
+      <thead><tr><th>When</th><th>Kind</th><th>Target</th><th>Status</th>
+        <th class="num">Risk</th><th class="num">Findings</th><th>Severity</th><th class="num">Hosts</th></tr></thead>
+      <tbody id="scanRows"><tr><td colspan="8" class="empty">Loading…</td></tr></tbody>
+    </table></div>
+
+    <h2>Activity log</h2>
+    <div class="tbl-wrap"><table class="data">
+      <thead><tr><th>When</th><th>Who</th><th>Action</th><th>Target</th><th>From</th></tr></thead>
+      <tbody id="actRows"><tr><td colspan="5" class="empty">Loading…</td></tr></tbody>
+    </table></div>
+  </div>
+
+  <div id="detail" style="display:none">
+    <div class="row" style="margin-top:22px"><button class="btn ghost" id="backBtn">← All scans</button>
+      <a class="btn ghost" id="jsonLink" href="#" download>Download JSON</a></div>
+    <h2 id="dTitle"></h2>
+    <div class="kpis" id="kpis"></div>
+    <div id="diffBox"></div>
+    <h2>Findings</h2>
+    <div class="card" id="findings"></div>
+    <div id="hostsSec" style="display:none">
+      <h2>Hosts</h2>
+      <div class="tbl-wrap"><table class="data">
+        <thead><tr><th>IP</th><th>Name</th><th>Vendor</th><th>MAC</th><th>OS</th><th>Open services</th></tr></thead>
+        <tbody id="hostRows"></tbody></table></div>
+    </div>
+  </div>
+</div>
+<script>
+document.addEventListener("DOMContentLoaded", () => {
+  const $ = id => document.getElementById(id);
+  const SEV = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"];
+  const KIND = { host: "This host", network: "Network", cloud: "Cloud" };
+  const sevChips = c => SEV.filter(s => c && c[s]).map(s => `<span class="sev ${s}" title="${s}">${c[s]}</span>`).join(" ");
+  let current = null;
+
+  async function loadList() {
+    const h = await (await fetch("/api/history")).json();
+    if (!h.db) {
+      $("nodb").style.display = "block";
+      $("nodb").innerHTML = "No database connected, so there is no history yet. Scans still work and are saved as files. " +
+        "To turn history on, run <code>sudo ./install.sh</code> from the project folder. Details: " + esc(window.DB_ERROR || "");
+    }
+    $("scanRows").innerHTML = h.scans.length ? h.scans.map(s => `
+      <tr class="click" data-ref="${esc(s.scan_ref)}">
+        <td>${esc(fmtTime(s.started_at))}</td><td>${esc(KIND[s.kind] || s.kind)}</td>
+        <td>${esc(s.target || "")}${s.mode ? ` <span class="muted">${esc(s.mode)} · ${esc(s.scan_type || "")}</span>` : ""}</td>
+        <td>${esc(s.status)}</td><td class="num">${s.risk_score ?? ""}</td><td class="num">${s.findings}</td>
+        <td>${sevChips(s.severity_counts)}</td><td class="num">${s.hosts || ""}</td></tr>`).join("")
+      : `<tr><td colspan="8" class="empty">${h.db ? "No scans yet. Run one from the Scan tab." : "History needs the database."}</td></tr>`;
+    document.querySelectorAll("#scanRows tr.click").forEach(tr => tr.onclick = () => openScan(tr.dataset.ref));
+
+    const act = await (await fetch("/api/activity")).json();
+    $("actRows").innerHTML = act.length ? act.map(a => `<tr><td>${esc(fmtTime(a.created_at))}</td><td>${esc(a.user_name)}</td>
+      <td><code>${esc(a.action)}</code></td><td>${esc(a.target || "")}</td><td>${esc(a.source_ip || "")}</td></tr>`).join("")
+      : '<tr><td colspan="5" class="empty">Nothing recorded yet.</td></tr>';
+  }
+
+  async function openScan(ref) {
+    const r = await fetch("/api/history/" + encodeURIComponent(ref));
+    if (!r.ok) return;
+    const d = await r.json(); current = d;
+    const s = d.scan;
+    $("list").style.display = "none"; $("detail").style.display = "block";
+    $("dTitle").textContent = `${KIND[s.kind] || s.kind} scan · ${fmtTime(s.started_at)}`;
+    const blob = new Blob([JSON.stringify(d, null, 2)], { type: "application/json" });
+    $("jsonLink").href = URL.createObjectURL(blob); $("jsonLink").download = `scan_${ref}.json`;
+    const k = [];
+    if (s.risk_score != null) k.push([s.risk_score + "/100", "Risk score"]);
+    k.push([d.findings.length, "Findings"]);
+    if (d.hosts.length) k.push([d.hosts.length, "Hosts"]);
+    if (s.elapsed_s != null) k.push([Math.round(s.elapsed_s) + " s", "Duration"]);
+    k.push([s.status, "Status"]);
+    $("kpis").innerHTML = k.map(([v, l]) => `<div class="kpi"><div class="v">${esc(v)}</div><div class="l">${l}</div></div>`).join("");
+
+    if (d.diff) {
+      const res = d.diff.resolved || [];
+      $("diffBox").innerHTML = `<div class="note">Compared with the previous scan of the same target (${esc(fmtTime(d.diff.previous_at))}):
+        <b>${d.diff.new}</b> new finding(s), <b>${res.length}</b> resolved.` +
+        (res.length ? "<br>Resolved: " + res.map(x => `<span class="sev ${x.severity}">${x.severity}</span> ${esc(x.title)}`).join(" · ") : "") + "</div>";
+    } else $("diffBox").innerHTML = '<div class="note">This is the first saved scan of this target, so there is nothing to compare with yet.</div>';
+
+    $("findings").innerHTML = d.findings.length ? d.findings.map(f => `
+      <details class="f"><summary><span class="sev ${f.severity}">${f.severity}</span>
+        <span>${esc(f.title)}</span>${f.is_new ? '<span class="badge new">new</span>' : ""}
+        <span class="muted" style="margin-left:auto">${esc(f.category || "")}</span></summary>
+        ${f.description ? `<pre>${esc(f.description)}</pre>` : ""}
+        ${f.affected_component ? `<pre>Affected: ${esc(f.affected_component)}</pre>` : ""}
+        ${f.remediation ? `<pre>Fix:\n${esc(f.remediation)}</pre>` : ""}</details>`).join("")
+      : '<div class="empty">No findings.</div>';
+
+    $("hostsSec").style.display = d.hosts.length ? "block" : "none";
+    $("hostRows").innerHTML = d.hosts.map(h => `<tr><td>${esc(h.ip)}</td><td>${esc(h.hostname || "")}</td><td>${esc(h.vendor || "")}</td>
+      <td><code>${esc(h.mac || "")}</code></td><td>${esc(h.os_guess || "")}</td>
+      <td>${h.services.map(p => `${p.port}/${p.protocol} ${esc(p.service || "")}`).join(", ")}</td></tr>`).join("");
+    history.replaceState(null, "", "#" + ref);
+  }
+
+  $("backBtn").onclick = () => { $("detail").style.display = "none"; $("list").style.display = "block"; history.replaceState(null, "", "/history"); };
+  loadList().then(() => { if (location.hash.length > 1) openScan(decodeURIComponent(location.hash.slice(1))); });
+});
+</script>
+</body></html>

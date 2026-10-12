@@ -32,11 +32,17 @@ from config import Config
 import scanner  # noqa: F401 — registers modules
 from scanner import ScanSession, ScanOrchestrator, MODULE_REGISTRY
 from reporters import generate_dashboard
+import db
 
 HOST, PORT = "127.0.0.1", 8765
 APP_DIR = Path(__file__).resolve().parent
 REPORTS = APP_DIR / "reports"
 REPORTS.mkdir(exist_ok=True)
+WEB = APP_DIR / "web"          # the browser pages
+PAGES = {"/": "index.html", "/index.html": "index.html",
+         "/history": "history.html", "/devices": "devices.html"}
+CTYPES = {".html": "text/html; charset=utf-8", ".css": "text/css; charset=utf-8",
+          ".js": "text/javascript; charset=utf-8", ".svg": "image/svg+xml"}
 ND_DIR = APP_DIR.parent / "discovery"  # network/cloud tool, same repo
 
 # ── in-memory scan state ─────────────────────────────────────────────────────
@@ -119,6 +125,7 @@ def run_host_scan(sid: str, opts: dict) -> None:
                     else:
                         _log(sid, f"    → {data.get('finding_count',0)} finding(s)")
 
+        db.scan_started(sid, "host", "127.0.0.1", mode, scan_type)
         orch = ScanOrchestrator(cfg, emit_fn=emit)
         with LOCK:
             SCANS[sid]["total"] = total
@@ -129,6 +136,11 @@ def run_host_scan(sid: str, opts: dict) -> None:
         html = generate_dashboard(session)
         (REPORTS / f"{sid}.json").write_text(json.dumps(d, indent=2))
         (REPORTS / f"{sid}_dashboard.html").write_text(html)
+        d["status"] = "cancelled" if session.status == "cancelled" else "complete"
+        if db.save_host_scan(d, str(REPORTS / f"{sid}_dashboard.html")):
+            _log(sid, "Saved to the database.")
+        db.log("scan.complete" if d["status"] == "complete" else "scan.stop", sid,
+               {"scope": "host", "findings": d["total_findings"], "risk": d["risk_score"]})
         with LOCK:
             s = SCANS[sid]
             s["counts"] = d["severity_counts"]; s["result_json"] = d
@@ -145,6 +157,7 @@ def run_host_scan(sid: str, opts: dict) -> None:
         with LOCK:
             SCANS[sid]["status"] = "error"; SCANS[sid]["current"] = f"Error: {e}"
         _log(sid, f"ERROR: {e}")
+        db.scan_ended(sid, "error")
 
 
 # network-discovery stages → where the bar should be when each one starts
@@ -202,6 +215,7 @@ def run_shell_scan(sid: str, opts: dict) -> None:
         if opts.get("scan_type", "quick") == "quick":
             args.append("--quick")
     _log(sid, "$ " + " ".join(args))
+    db.scan_started(sid, scope, None, None, opts.get("scan_type") if scope == "network" else opts.get("provider", "all"))
 
     try:
         proc = subprocess.Popen(
@@ -271,6 +285,25 @@ def run_shell_scan(sid: str, opts: dict) -> None:
         else:
             s["status"] = "error"
             s["current"] = f"The scan failed: {last_fail or 'no dashboard was produced'}"
+        final = s["status"]
+    _store_shell_result(sid, scope, final, run_dir)
+
+
+def _store_shell_result(sid: str, scope: str, status: str, run_dir) -> None:
+    """Save a discovery run's findings.json to the database, or just mark how it ended."""
+    fj = run_dir / "findings.json" if run_dir else None
+    if status == "complete" and fj and fj.exists():
+        try:
+            data = json.loads(fj.read_text())
+        except (OSError, ValueError):
+            data = None
+        if data is not None and db.save_network_scan(data, kind=scope, ref=sid,
+                                                     report_path=str(run_dir / "dashboard.html")):
+            _log(sid, "Saved to the database.")
+    else:
+        db.scan_ended(sid, status if status in ("cancelled", "error") else "error")
+    db.log("scan.complete" if status == "complete" else "scan.stop" if status == "cancelled" else "scan.error",
+           sid, {"scope": scope})
 
 
 SCOPE_RUNNERS = {
@@ -280,9 +313,10 @@ SCOPE_RUNNERS = {
 }
 
 
-def start_scan(scope: str, opts: dict) -> str:
+def start_scan(scope: str, opts: dict, source_ip: str | None = None) -> str:
     opts = dict(opts); opts["scope"] = scope
     sid = _new_scan(scope, opts)
+    db.log("scan.start", sid, opts, source_ip)
     runner = SCOPE_RUNNERS.get(scope, run_host_scan)
     threading.Thread(target=runner, args=(sid, opts), daemon=True).start()
     return sid
@@ -297,6 +331,7 @@ def stop_scan(sid: str) -> bool:
         s["module"] = "Stopping…"; s["activity"] = "finishing the current step"
         cancel = s["cancel"]
     cancel()
+    db.log("scan.stop", sid)
     return True
 
 
@@ -318,8 +353,21 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         path = urlparse(self.path).path
-        if path == "/" or path == "/index.html":
-            return self._send(200, CONTROL_HTML, "text/html; charset=utf-8")
+        if path in PAGES or path.startswith("/web/"):
+            name = PAGES.get(path) or path[len("/web/"):]
+            f = (WEB / name).resolve()
+            if WEB.resolve() not in f.parents or not f.is_file():
+                return self._send(404, {"error": "not found"})
+            return self._send(200, f.read_bytes(), CTYPES.get(f.suffix, "application/octet-stream"))
+        if path == "/api/db/status":
+            return self._send(200, db.status())
+        if path == "/api/history":
+            return self._send(200, {"db": db.ready(), "scans": db.list_scans(200)})
+        if path.startswith("/api/history/"):
+            got = db.get_scan(path.split("/")[3])
+            return self._send(200 if got else 404, got or {"error": "not found"})
+        if path == "/api/activity":
+            return self._send(200, db.recent_activity(100))
         if path == "/api/env":
             return self._send(200, environment())
         if path.startswith("/api/scan/") and path.endswith("/status"):
@@ -369,7 +417,7 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:
                 body = {}
             scope = body.get("scope", "host")
-            sid = start_scan(scope, body)
+            sid = start_scan(scope, body, self.client_address[0])
             return self._send(200, {"scan_id": sid})
         if path.startswith("/api/scan/") and path.endswith("/stop"):
             sid = path.split("/")[3]
@@ -378,238 +426,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 # ── control panel page ───────────────────────────────────────────────────────
-CONTROL_HTML = r"""<!DOCTYPE html>
-<html lang="en"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>SentinelScan</title>
-<style>
-  :root{color-scheme:light;--plane:#f9f9f7;--surface-1:#fcfcfb;--text-primary:#0b0b0b;
-    --text-secondary:#52514e;--text-muted:#898781;--border:rgba(11,11,11,0.10);
-    --series-1:#2a78d6;--series-1-soft:#cde2fb;--good:#0ca30c;--warning:#fab219;
-    --serious:#ec835a;--critical:#d03b3b;--radius:10px;}
-  @media (prefers-color-scheme:dark){:root:where(:not([data-theme=light])){color-scheme:dark;
-    --plane:#0d0d0d;--surface-1:#1a1a19;--text-primary:#fff;--text-secondary:#c3c2b7;
-    --text-muted:#898781;--border:rgba(255,255,255,0.10);--series-1:#3987e5;--series-1-soft:#184f95;}}
-  :root[data-theme=dark]{color-scheme:dark;--plane:#0d0d0d;--surface-1:#1a1a19;--text-primary:#fff;
-    --text-secondary:#c3c2b7;--text-muted:#898781;--border:rgba(255,255,255,0.10);
-    --series-1:#3987e5;--series-1-soft:#184f95;}
-  *{box-sizing:border-box}
-  body{margin:0;padding:0 16px 64px;background:var(--plane);color:var(--text-primary);
-    font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
-  .wrap{max-width:900px;margin:0 auto}
-  header{padding:28px 0 8px}
-  h1{margin:0 0 4px;font-size:24px;letter-spacing:-.01em}
-  .sub{color:var(--text-secondary);font-size:13.5px}
-  h2{font-size:13px;text-transform:uppercase;letter-spacing:.07em;color:var(--text-muted);
-    margin:26px 0 12px;font-weight:600}
-  .scopes{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(220px,1fr))}
-  .scope{background:var(--surface-1);border:1px solid var(--border);border-radius:var(--radius);
-    padding:16px 18px;cursor:pointer;transition:border-color .12s}
-  .scope:hover{border-color:var(--series-1)}
-  .scope.on{border-color:var(--series-1);box-shadow:0 0 0 1px var(--series-1) inset}
-  .scope .t{font-weight:600;font-size:15px;margin-bottom:3px}
-  .scope .d{color:var(--text-muted);font-size:12.5px}
-  .opts{background:var(--surface-1);border:1px solid var(--border);border-radius:var(--radius);
-    padding:16px 18px;margin-top:14px;display:flex;flex-wrap:wrap;gap:14px}
-  .field{display:flex;flex-direction:column;gap:4px}
-  .field label{font-size:11.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--text-muted)}
-  select,input{background:var(--plane);color:var(--text-primary);border:1px solid var(--border);
-    border-radius:8px;padding:8px 11px;font:inherit;font-size:13.5px;min-width:150px}
-  .go{margin-top:18px;display:flex;gap:12px;align-items:center}
-  button.start{background:var(--series-1);color:#fff;border:none;border-radius:8px;
-    padding:11px 22px;font:inherit;font-size:14px;font-weight:600;cursor:pointer}
-  button.start:disabled{opacity:.5;cursor:default}
-  button.theme{background:var(--surface-1);color:var(--text-secondary);border:1px solid var(--border);
-    border-radius:999px;padding:7px 14px;font:inherit;font-size:13px;cursor:pointer;float:right}
-  /* progress */
-  #run{display:none;margin-top:8px}
-  .bar{height:12px;border-radius:6px;background:var(--series-1-soft);overflow:hidden;margin:6px 0 4px}
-  .bar>span{display:block;height:100%;background:var(--series-1);width:0;transition:width .4s}
-  .status{font-size:14px;margin-bottom:8px}
-  .now{background:var(--surface-1);border:1px solid var(--border);border-radius:var(--radius);padding:14px 16px}
-  .now-top{display:flex;justify-content:space-between;align-items:baseline;gap:12px}
-  .now-mod{font-size:16px;font-weight:650}
-  .now-pct{font-size:16px;font-weight:650;color:var(--series-1);font-variant-numeric:tabular-nums}
-  .now-act{color:var(--text-secondary);font-size:13.5px;margin-top:2px;min-height:18px}
-  .now-cmd{margin-top:10px;display:flex;align-items:center;gap:8px;background:var(--plane);
-    border:1px solid var(--border);border-radius:7px;padding:7px 11px;
-    font:12.5px/1.4 ui-monospace,Menlo,Consolas,monospace;color:var(--text-primary);
-    overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .dotpulse{flex:none;width:8px;height:8px;border-radius:50%;background:var(--good);animation:pulse 1s infinite}
-  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.25}}
-  .log-h{color:var(--text-muted);font-size:12px;margin:14px 0 6px;text-transform:uppercase;letter-spacing:.04em}
-  .log{background:var(--surface-1);border:1px solid var(--border);border-radius:8px;
-    padding:12px 14px;height:260px;overflow:auto;font:12.5px/1.5 ui-monospace,Menlo,Consolas,monospace;
-    color:var(--text-secondary);white-space:pre-wrap}
-  .done-bar{display:none;margin-top:14px;gap:10px}
-  .done-bar a,.done-bar button{background:var(--series-1);color:#fff;border:none;border-radius:8px;
-    padding:10px 18px;font:inherit;font-size:14px;font-weight:600;cursor:pointer;text-decoration:none;display:inline-block}
-  .done-bar .ghost{background:var(--surface-1);color:var(--text-secondary);border:1px solid var(--border)}
-  iframe{width:100%;height:80vh;border:1px solid var(--border);border-radius:var(--radius);margin-top:16px;background:var(--plane)}
-  .ready{margin-top:12px;font-size:13px;color:var(--text-secondary);display:flex;flex-direction:column;gap:4px}
-  .ready code{background:var(--surface-1);border:1px solid var(--border);border-radius:5px;padding:1px 6px;font-size:12px}
-  .ready .ok{color:var(--good);font-weight:700}.ready .warn{color:var(--serious);font-weight:700}
-  .ready .bad{color:var(--critical);font-weight:700}.muted{color:var(--text-muted)}
-  button.stop{background:var(--surface-1);color:var(--critical);border:1px solid var(--critical);border-radius:8px;
-    padding:9px 18px;font:inherit;font-size:14px;font-weight:600;cursor:pointer}
-  button.stop:disabled{opacity:.6;cursor:default}
-  .note{margin-top:10px;background:var(--surface-1);border:1px solid var(--border);border-left:3px solid var(--warning);
-    border-radius:8px;padding:9px 12px;font-size:13px;color:var(--text-secondary)}
-</style></head>
-<body><div class="wrap">
-  <button class="theme" id="themeBtn">Toggle theme</button>
-  <header><h1>SentinelScan</h1>
-    <div class="sub">Choose what to scan, then start. Everything runs locally on this machine.</div>
-  </header>
 
-  <div id="setup">
-    <h2>What do you want to scan?</h2>
-    <div class="scopes" id="scopes">
-      <div class="scope on" data-scope="host">
-        <div class="t">This host</div>
-        <div class="d">Audit this machine's own security: ports, firewall, SSH, hardening, users, updates and more.</div></div>
-      <div class="scope" data-scope="network">
-        <div class="t">The network</div>
-        <div class="d">Find the devices and services on your LAN, using the network-discovery tool.</div></div>
-      <div class="scope" data-scope="cloud">
-        <div class="t">The cloud</div>
-        <div class="d">List AWS, Azure, GCP and Kubernetes resources. Needs a cloud CLI that is signed in.</div></div>
-    </div>
-
-    <div class="opts" id="opts"></div>
-    <div class="ready" id="ready"></div>
-
-    <div class="go">
-      <button class="start" id="startBtn">Start scan</button>
-    </div>
-  </div>
-
-  <div id="run">
-    <h2 id="runTitle">Scanning</h2>
-    <div class="now" id="now">
-      <div class="now-top">
-        <span class="now-mod" id="nowMod">Starting…</span>
-        <span class="now-pct" id="nowPct">0%</span>
-      </div>
-      <div class="now-act" id="nowAct"></div>
-      <div class="now-cmd" id="nowCmd"><span class="dotpulse"></span><span id="nowCmdText">preparing…</span></div>
-    </div>
-    <div class="bar"><span id="barFill"></span></div>
-    <div class="note" id="noteBox" style="display:none"></div>
-    <div class="go" id="stopRow"><button class="stop" id="stopBtn">Stop scan</button></div>
-    <div class="log-h">Live activity log: every check and command as it runs</div>
-    <div class="log" id="logBox"></div>
-    <div class="done-bar" id="doneBar">
-      <a id="viewBtn" href="#">Open dashboard</a>
-      <a id="jsonBtn" class="ghost" href="#">Download JSON</a>
-      <button class="ghost" id="againBtn">New scan</button>
-    </div>
-    <iframe id="frame" style="display:none"></iframe>
-  </div>
-</div>
-<script>
-(function(){
-  const $=id=>document.getElementById(id);
-  try{const t=localStorage.getItem("sentinel-theme");if(t)document.documentElement.setAttribute("data-theme",t);}catch(e){}
-  $("themeBtn").onclick=()=>{const c=document.documentElement.getAttribute("data-theme");
-    const dark=c?c==="dark":matchMedia("(prefers-color-scheme:dark)").matches;const n=dark?"light":"dark";
-    document.documentElement.setAttribute("data-theme",n);try{localStorage.setItem("sentinel-theme",n);}catch(e){}};
-
-  let scope="host", ENV=null;
-  const PROV={all:"All installed",aws:"AWS",azure:"Azure",gcp:"Google Cloud",k8s:"Kubernetes"};
-  function opts(){
-    if(scope==="host") return [["mode","Mode",[["workstation","Workstation (this PC / laptop)"],["server","Server (hosts services)"]]],
-                               ["scan_type","Depth",[["quick","Quick"],["full","Full (all ports, slower)"]]]];
-    if(scope==="network") return [["scan_type","Depth",[["quick","Quick (find devices, minutes)"],["full","Full (per-device port scan, can take hours)"]]]];
-    return [["provider","Provider",Object.keys(PROV).map(k=>
-      [k, PROV[k]+(k!=="all"&&ENV&&!ENV.clouds[k]?" (not installed)":"")])]];
-  }
-  function renderOpts(){
-    $("opts").innerHTML=opts().map(([k,label,vals])=>
-      `<div class="field"><label>${label}</label><select data-k="${k}">`+
-      vals.map(([v,t])=>`<option value="${v}">${t}</option>`).join("")+`</select></div>`).join("");
-    renderReady();
-  }
-  function renderReady(){
-    const box=$("ready"); let lines=[], ok=true;
-    if(!ENV){ box.innerHTML='<span class="muted">Checking this machine…</span>'; return; }
-    const admin=ENV.admin
-      ? '<span class="ok">✓</span> Admin rights available.'
-      : '<span class="warn">!</span> No admin rights. Scans run, but checks that need root see less. To include them, stop the panel and start it with <code>sudo python3 serve.py</code>.';
-    if(scope==="host"){ lines.push('<span class="ok">✓</span> Ready.'); lines.push(admin); }
-    if(scope==="network"){
-      if(!ENV.nd_tool){ ok=false; lines.push('<span class="bad">✗</span> network-discovery tool not found in <code>discovery/</code> next to the panel.'); }
-      else lines.push('<span class="ok">✓</span> network-discovery tool found.');
-      lines.push(ENV.admin?admin:'<span class="warn">!</span> No admin rights: the ARP sweep and OS detection will be skipped. Device and port discovery still run.');
-    }
-    if(scope==="cloud"){
-      const have=Object.keys(ENV.clouds).filter(k=>ENV.clouds[k]);
-      if(!have.length){ lines.push('<span class="bad">✗</span> No cloud tool is installed (aws, az, gcloud, kubectl), so a cloud scan will find nothing. Install one and sign in first.'); }
-      else lines.push('<span class="ok">✓</span> Installed: '+have.map(k=>PROV[k]).join(", ")+'. They must also be signed in.');
-    }
-    box.innerHTML=lines.map(l=>`<div>${l}</div>`).join("");
-    $("startBtn").disabled=!ok;
-  }
-  document.querySelectorAll(".scope").forEach(el=>el.onclick=()=>{
-    document.querySelectorAll(".scope").forEach(s=>s.classList.remove("on"));
-    el.classList.add("on"); scope=el.dataset.scope; renderOpts();
-  });
-  renderOpts();
-  fetch("/api/env").then(r=>r.json()).then(e=>{ENV=e; renderOpts();}).catch(()=>{});
-
-  let pollTimer=null, curId=null;
-  $("startBtn").onclick=async()=>{
-    const o={scope};
-    $("opts").querySelectorAll("select").forEach(s=>o[s.dataset.k]=s.value);
-    $("startBtn").disabled=true;
-    const r=await fetch("/api/scan/start",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(o)});
-    const j=await r.json(); curId=j.scan_id;
-    $("setup").style.display="none"; $("run").style.display="block";
-    $("runTitle").textContent="Scanning";
-    $("doneBar").style.display="none"; $("frame").style.display="none";
-    $("noteBox").style.display="none"; $("nowCmd").style.display="flex";
-    $("stopRow").style.display="flex"; $("stopBtn").disabled=false; $("stopBtn").textContent="Stop scan";
-    $("barFill").style.width="0%"; $("logBox").textContent="";
-    poll();
-  };
-  $("stopBtn").onclick=async()=>{
-    if(!curId) return;
-    $("stopBtn").disabled=true; $("stopBtn").textContent="Stopping…";
-    await fetch(`/api/scan/${curId}/stop`,{method:"POST"});
-  };
-  async function poll(){
-    if(!curId)return;
-    let s;
-    try{ s=await (await fetch(`/api/scan/${curId}/status`)).json(); }
-    catch(e){ $("nowMod").textContent="Lost contact with the panel. Is serve.py still running?"; pollTimer=setTimeout(poll,2000); return; }
-    $("barFill").style.width=(s.pct||0)+"%";
-    $("nowPct").textContent=(s.pct||0)+"%";
-    $("nowMod").textContent=s.module||s.current||s.status;
-    $("nowAct").textContent=s.activity||"";
-    $("nowCmdText").textContent=s.cmd||(s.status==="running"?"working…":"");
-    if(s.note){ $("noteBox").textContent=s.note; $("noteBox").style.display="block"; }
-    $("logBox").textContent=(s.log||[]).join("\n"); $("logBox").scrollTop=1e9;
-    if(s.status==="running"){ pollTimer=setTimeout(poll,1000); return; }
-
-    // finished: complete, cancelled (stopped) or error
-    $("stopRow").style.display="none"; $("nowCmd").style.display="none"; $("nowAct").textContent="";
-    $("runTitle").textContent = s.status==="complete"?"Finished":s.status==="cancelled"?"Stopped":"Failed";
-    $("nowMod").textContent=s.current||s.status;
-    if(s.status==="complete"){ $("nowPct").textContent="100%"; $("barFill").style.width="100%"; }
-    $("doneBar").style.display="flex";
-    $("viewBtn").style.display=s.has_result?"inline-block":"none";
-    $("jsonBtn").style.display=s.has_json?"inline-block":"none";
-    if(s.has_result){
-      $("viewBtn").href=`/results/${curId}`; $("viewBtn").target="_blank";
-      $("jsonBtn").href=`/api/scan/${curId}/json`;
-      $("frame").src=`/results/${curId}`; $("frame").style.display="block";
-    }
-  }
-  $("againBtn").onclick=()=>{ if(pollTimer)clearTimeout(pollTimer); curId=null;
-    $("run").style.display="none"; $("setup").style.display="block"; renderReady(); };
-})();
-</script>
-</body></html>"""
 
 
 def main():
