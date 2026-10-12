@@ -1,15 +1,26 @@
 # Credentials - the vault must never be committed, encrypted or not.
-config/vault.gpg
-config/vault*
+discovery/config/vault.gpg
+discovery/config/vault*
 *.gpg
 *.asc
 
 # Scan results: these describe a real network. Keep them local.
-reports/*
-!reports/.gitkeep
+discovery/reports/*
+!discovery/reports/.gitkeep
+panel/reports/*
+!panel/reports/.gitkeep
+panel/backups/*
+!panel/backups/.gitkeep
 
-# Local overrides
-config/settings.local.conf
+# Local settings (database password, overrides)
+discovery/config/settings.local.conf
+panel/settings.local.json
+.env
+
+# Python
+__pycache__/
+*.pyc
+.venv/
 
 # Editor / OS noise
 *.swp

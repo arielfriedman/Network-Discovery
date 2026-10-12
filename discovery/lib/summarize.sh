@@ -127,7 +127,7 @@ publish_outputs() {
   ok "Desktop report : $desk"
 
   # a stable "latest" pointer, plus the dashboard
-  ln -sfn "$RUN_DIR" "$BASE_DIR/reports/latest"
+  ln -sfn "$(basename "$RUN_DIR")" "$BASE_DIR/reports/latest"  # relative, survives moving the folder
   if [[ -f "$RUN_DIR/dashboard.html" ]]; then
     cp "$RUN_DIR/dashboard.html" "$DESKTOP_DIR/network-scan-$RUN_ID.html"
     ok "Desktop dashboard: $DESKTOP_DIR/network-scan-$RUN_ID.html"
