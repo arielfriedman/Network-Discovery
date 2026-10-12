@@ -264,8 +264,10 @@ def preview(dev_id: int, wizard_id: str, params: dict) -> dict:
         val = clean[f.name]
         if f.required and f.type != "checkbox" and not (val if isinstance(val, list) else str(val).strip()):
             raise ValidationError(f"{f.label} is required")
-        if f.source == "interfaces" and names and str(val).strip() and str(val) not in names:
-            raise ValidationError(f"{f.label}: the device has no interface called '{val}'")
+        if f.source == "interfaces" and names:
+            for item in (val if isinstance(val, list) else [val]):
+                if str(item).strip() and str(item) not in names:
+                    raise ValidationError(f"{f.label}: the device has no interface called '{item}'")
     plan: Plan = w.build(clean, drv)
     pid = uuid.uuid4().hex
     with LOCK:

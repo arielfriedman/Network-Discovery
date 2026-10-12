@@ -55,6 +55,36 @@ sudo ./start.sh     # same, with the checks that need root (ARP sweep, OS detect
 | `db/migrations/` | PostgreSQL schema, applied in order by `python3 panel/db.py migrate` |
 | `docs/` | design notes and roadmaps |
 
+## Device wizard
+
+The **Devices** page manages firewalls, switches and routers:
+
+| Vendor | Models | How it connects |
+|---|---|---|
+| Fortinet | FortiGate 100F, 200E (FortiOS 7.4 / 7.6) | REST API with an API token |
+| Cisco | Catalyst 9200 / 9300, Catalyst 8200 / 8300, ISR 1100 (IOS-XE); Catalyst 1200 / 1300 | SSH |
+| Palo Alto | PA-440/450/460, PA-1410/1420, PA-3410/3420, VM-Series | XML API |
+| Check Point | Quantum Spark 1600-2000; Quantum Force 9100/9200 via the Management Server | Spark API / Management API |
+
+How a change works:
+
+1. **Connect.** On first contact you confirm the device's certificate or SSH host-key fingerprint;
+   credentials are only ever sent to that confirmed device, and are kept in memory only
+   (never in the database or on disk).
+2. **Pick a wizard and fill in the form.** Every field is validated, so input cannot turn into extra commands.
+3. **Preview.** You see the exact API calls or CLI lines, plus the undo steps.
+4. **Apply.** A full configuration backup is stored first, then the change is sent
+   (and committed / published where the vendor needs it). Cisco IOS-XE changes use an auto-revert timer.
+5. **Roll back** any change from the Changes tab, or download the backup taken before it.
+
+No equipment to try it on? Start the simulated lab and add the devices it prints:
+
+```bash
+cd panel && python3 -m devices.lab
+```
+
+Supported models and API details: [docs/DEVICE_MODELS.md](docs/DEVICE_MODELS.md).
+
 ## Database
 
 ```bash
