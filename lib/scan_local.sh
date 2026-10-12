@@ -5,6 +5,7 @@
 # Host discovery. Two independent sweeps, then merge - arp-scan sees things
 # that ignore ICMP, nmap sees things outside the broadcast domain.
 stage_discover() {
+  [[ "${DO_DISCOVER:-1}" == 1 ]] || { info "host discovery disabled"; return 0; }
   section "Stage 1 - host discovery on $TARGET_CIDR"
 
   if have arp-scan && can_root; then

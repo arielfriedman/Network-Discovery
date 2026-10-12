@@ -122,6 +122,8 @@ ask_secret() {  # ask_secret VARNAME "prompt" - no echo, registered for scrubbin
 run_tool() {
   local label="$1" out="$2"; shift 2
   step "$label"
+  # machine-readable line for the SentinelScan control panel (off by default)
+  [[ "${ND_PROGRESS:-0}" == 1 ]] && printf '@@cmd %s\n' "$*"
   local start=$SECONDS
   {
     printf '### %s\n### cmd: %s\n### started: %s\n\n' \

@@ -12,6 +12,7 @@
 #   --vuln            run nmap vulnerability scripts (slow, noisy)
 #   --no-install      never install packages
 #   --no-cloud        skip the cloud inventory
+#   --cloud-only      run only the cloud inventory (no LAN scanning)
 #   --no-passive      skip mDNS/SSDP/NetBIOS/LLDP
 #   --no-wan          skip gateway/traceroute/public-IP checks
 #   --allow-public    permit a target outside private address space
@@ -48,6 +49,7 @@ while (( $# )); do
     --vuln)         DO_VULN=1; shift ;;
     --no-install)   DO_INSTALL=0; shift ;;
     --no-cloud)     DO_CLOUD=0; shift ;;
+    --cloud-only)   DO_DISCOVER=0; DO_PASSIVE=0; DO_DEEP=0; DO_WAN=0; DO_AUTH=0; DO_CLOUD=1; shift ;;
     --no-passive)   DO_PASSIVE=0; shift ;;
     --no-wan)       DO_WAN=0; shift ;;
     --allow-public) ALLOW_PUBLIC=1; shift ;;

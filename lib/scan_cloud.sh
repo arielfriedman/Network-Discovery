@@ -15,10 +15,12 @@ stage_cloud() {
 
   vault_unlock --optional >/dev/null 2>&1 || true
 
-  cloud_aws   && any=1
-  cloud_azure && any=1
-  cloud_gcp   && any=1
-  cloud_k8s   && any=1
+  # CLOUD_PROVIDERS narrows the run, e.g. CLOUD_PROVIDERS="aws" (default: all)
+  local want=" ${CLOUD_PROVIDERS:-aws azure gcp k8s} "
+  [[ "$want" == *" aws "*   ]] && cloud_aws   && any=1
+  [[ "$want" == *" azure "* ]] && cloud_azure && any=1
+  [[ "$want" == *" gcp "*   ]] && cloud_gcp   && any=1
+  [[ "$want" == *" k8s "*   ]] && cloud_k8s   && any=1
 
   (( any )) || info "no cloud account reachable - nothing collected"
   CLOUD_FOUND=$any
