@@ -168,11 +168,15 @@ def recent_activity(limit: int = 50) -> list[dict]:
 
 # ── writing scans ────────────────────────────────────────────────────────────
 def scan_started(ref: str, kind: str, target: str | None = None,
-                 mode: str | None = None, scan_type: str | None = None) -> None:
+                 mode: str | None = None, scan_type: str | None = None,
+                 options: dict | None = None, target_spec: dict | None = None) -> None:
     def fn(cur):
-        cur.execute("""INSERT INTO scans (scan_ref, kind, target, mode, scan_type, started_by)
-                       VALUES (%s, %s, %s, %s, %s, %s) ON CONFLICT (scan_ref) DO NOTHING""",
-                    (ref, kind, _norm_target(target), mode, scan_type, _local_user(cur)))
+        cur.execute("""INSERT INTO scans (scan_ref, kind, target, mode, scan_type, started_by,
+                                          options, target_spec)
+                       VALUES (%s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT (scan_ref) DO NOTHING""",
+                    (ref, kind, _norm_target(target), mode, scan_type, _local_user(cur),
+                     psycopg2.extras.Json(options) if options else None,
+                     psycopg2.extras.Json(target_spec) if target_spec else None))
     _run(fn)
 
 
@@ -194,7 +198,7 @@ def _upsert_scan(cur, ref, kind, **cols) -> int:
         sets = ", ".join(f"{k} = %s" for k in cols)
         cur.execute(f"UPDATE scans SET {sets} WHERE id = %s", (*cols.values(), scan_id))
     # a re-import replaces the old rows instead of doubling them
-    for table in ("scan_modules", "findings", "hosts"):
+    for table in ("scan_modules", "findings", "hosts", "scan_targets"):
         cur.execute(f"DELETE FROM {table} WHERE scan_id = %s", (scan_id,))
     return scan_id
 
@@ -248,6 +252,9 @@ def save_host_scan(d: dict, report_path: str | None = None) -> bool:
 NOTABLE_SEVERITY = {"crit": "HIGH", "warn": "MEDIUM", "info": "INFO"}
 
 
+TARGET_STATUSES = ("up", "assumed_up", "no_response", "unresolved", "not_seen")
+
+
 def save_network_scan(data: dict, kind: str = "network", status: str = "complete",
                       ref: str | None = None, report_path: str | None = None) -> bool:
     """Store a discovery findings.json (discovery/lib/build_json.py)."""
@@ -273,6 +280,16 @@ def save_network_scan(data: dict, kind: str = "network", status: str = "complete
         cur.execute("""UPDATE scans SET elapsed_s = round(extract(epoch FROM finished_at - started_at)::numeric, 1)
                        WHERE id = %s""", (sid,))
         _insert_findings(cur, sid, findings)
+        trows = []
+        for t in data.get("targets", []):
+            if t.get("kind") in ("ip", "cidr", "mac", "host") and t.get("status") in TARGET_STATUSES:
+                ips = [x for x in str(t.get("ip") or "").split(",") if re.match(r"^\d+\.\d+\.\d+\.\d+$", x)]
+                trows.append((sid, t["kind"], str(t.get("value", ""))[:300], str(t.get("source") or "typed")[:60],
+                              ips, t["status"], t.get("detail") or None))
+        if trows:
+            psycopg2.extras.execute_values(cur, """INSERT INTO scan_targets
+                (scan_id, kind, value, source, resolved_ip, status, detail) VALUES %s""", trows,
+                template="(%s, %s, %s, %s, %s::inet[], %s, %s)")
         for h in data.get("hosts", []):
             ip = h.get("ip")
             if not ip or not re.match(r"^[0-9a-fA-F:.]+$", ip):
@@ -332,6 +349,9 @@ def get_scan(ref: str) -> dict | None:
                        FROM hosts h LEFT JOIN services s ON s.host_id = h.id
                        WHERE h.scan_id = %s GROUP BY h.id ORDER BY h.ip""", (sid,))
         hosts = cur.fetchall()
+        cur.execute("""SELECT kind, value, source, (SELECT string_agg(host(x), ',') FROM unnest(resolved_ip) x) AS ip, status, detail
+                       FROM scan_targets WHERE scan_id = %s ORDER BY id""", (sid,))
+        targets = cur.fetchall()
         # compare with the previous finished scan of the same kind and target
         cur.execute("""SELECT id, scan_ref, started_at FROM scans
                        WHERE kind = %s AND target IS NOT DISTINCT FROM %s AND started_at < %s
@@ -352,7 +372,7 @@ def get_scan(ref: str) -> dict | None:
             for f in findings:
                 f["is_new"] = f["fingerprint"] not in before
         scan.pop("id", None)
-        return _jsonable({"scan": scan, "findings": findings, "hosts": hosts, "diff": diff})
+        return _jsonable({"scan": scan, "findings": findings, "hosts": hosts, "targets": targets, "diff": diff})
     return _run(fn)
 
 

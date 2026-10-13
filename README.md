@@ -42,7 +42,7 @@ sudo ./start.sh     # same, with the checks that need root (ARP sweep, OS detect
 
 | Page | What it does |
 |---|---|
-| **Scan** | pick *this host*, *the network* or *the cloud*, start, watch live progress, read the dashboard |
+| **Scan** | pick *this host*, *the network* or *the cloud*, start, watch live progress, read the dashboard. For the network: the whole local range or a list of IPs, ranges, MAC addresses and hostnames (typed or uploaded as `ip.txt` / `mac.txt` / `hostnames.txt`), plus a checklist of what to run |
 | **History** | every saved scan, what is new or resolved since the previous one, and the activity log |
 | **Devices** | add FortiGate, Cisco, Palo Alto and Check Point devices, back up configs, run wizards |
 
@@ -53,7 +53,7 @@ sudo ./start.sh     # same, with the checks that need root (ARP sweep, OS detect
 | `panel/` | the dashboard server (`serve.py`, standard library only), host-audit engine, `db.py`, web pages |
 | `discovery/` | the network / cloud scanner and the encrypted credential vault — see [discovery/README.md](discovery/README.md) |
 | `db/migrations/` | PostgreSQL schema, applied in order by `python3 panel/db.py migrate` |
-| `docs/` | design notes and roadmaps |
+| `docs/` | design notes, roadmaps, and [DEVLOG.md](docs/DEVLOG.md): every change with the problems hit and how it was tested |
 
 ## Device wizard
 

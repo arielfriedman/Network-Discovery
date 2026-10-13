@@ -2,10 +2,26 @@
 # scan_local.sh - layer 2/3 discovery, passive service discovery, deep host scan.
 
 # ---------------------------------------------------------------- stage 1
+# nmap ping-sweep options into the named array.
+sweep_opts() {
+  local -n _o="$1"
+  if can_root; then
+    # ARP ping is both faster and more reliable on-LAN
+    _o=(-sn -n --max-retries 2 "-T$NMAP_TIMING" -PR)
+  else
+    # Without root nmap falls back to TCP connect probes, and every empty
+    # address waits out ARP resolution. Default timing made a /19 take over
+    # 10 minutes; these limits finish it in about a minute, same hosts found.
+    _o=(-sn -n --max-retries 1 "-T$NMAP_TIMING" --min-parallelism 100
+        --initial-rtt-timeout 200ms --max-rtt-timeout 400ms)
+  fi
+}
+
 # Host discovery. Two independent sweeps, then merge - arp-scan sees things
 # that ignore ICMP, nmap sees things outside the broadcast domain.
 stage_discover() {
   [[ "${DO_DISCOVER:-1}" == 1 ]] || { info "host discovery disabled"; return 0; }
+  [[ -n "${TARGETS_FILE:-}" ]] && { stage_discover_targets; return 0; }
   section "Stage 1 - host discovery on $TARGET_CIDR"
 
   if have arp-scan && can_root; then
@@ -16,16 +32,7 @@ stage_discover() {
   fi
 
   if have nmap; then
-    local -a png=(-sn -n --max-retries 2 "-T$NMAP_TIMING")
-    if can_root; then
-      png+=(-PR)   # ARP ping is both faster and more reliable on-LAN
-    else
-      # Without root nmap falls back to TCP connect probes, and every empty
-      # address waits out ARP resolution. Default timing made a /19 take over
-      # 10 minutes; these limits finish it in about a minute, same hosts found.
-      png=(-sn -n --max-retries 1 "-T$NMAP_TIMING" --min-parallelism 100
-           --initial-rtt-timeout 200ms --max-rtt-timeout 400ms)
-    fi
+    local -a png; sweep_opts png
     run_tool "nmap ping sweep" "$RAW/11-nmap-sweep.txt" \
       as_root nmap "${png[@]}" -oG "$RAW/11-nmap-sweep.gnmap" "$TARGET_CIDR" || true
   else
@@ -36,6 +43,57 @@ stage_discover() {
   run_tool "kernel neighbour table" "$RAW/12-neigh.txt" ip neigh show || true
 
   build_host_list
+}
+
+# Stage 1 for a list of targets (--targets FILE): IPs, ranges, hostnames and
+# MAC addresses. Only the listed hosts end up in the report. See
+# docs/SCAN_BUILDER.md for the rules.
+stage_discover_targets() {
+  local n_in
+  n_in=$(wc -l <"$TARGETS_FILE")
+  section "Stage 1 - host discovery on $n_in listed target(s)"
+  cp "$TARGETS_FILE" "$WORK/targets.in"
+  cp "$TARGETS_FILE" "$RAW/05-targets.txt"
+
+  local plan
+  plan=$(python3 "$BASE_DIR/lib/targets_util.py" plan "$WORK/targets.in" "$WORK" "$ALLOWED_PREFIXES")
+  if [[ -s "$WORK/resolve.tsv" ]]; then
+    step "resolved $(awk -F'\t' '$2!=""' "$WORK/resolve.tsv" | wc -l) of $(wc -l <"$WORK/resolve.tsv") hostname(s)"
+  fi
+
+  # A MAC address has no IP until the local network shows it: sweep the local
+  # range so the ARP / neighbour table fills, then match.
+  if [[ "$plan" == *NEED_MAC=1* ]]; then
+    info "MAC targets: sweeping the local range $TARGET_CIDR to find them"
+    if have arp-scan && can_root; then
+      run_tool "arp-scan layer-2 sweep (for MAC targets)" "$RAW/10-arp-scan.txt" \
+        as_root arp-scan --interface="$IFACE" --retry=2 --timeout=300 "$TARGET_CIDR" || true
+    elif have nmap; then
+      local -a mpng; sweep_opts mpng
+      run_tool "local sweep (for MAC targets)" "$RAW/14-mac-sweep.txt" \
+        as_root nmap "${mpng[@]}" "$TARGET_CIDR" || true
+    fi
+  fi
+
+  if [[ -s "$WORK/sweep.list" ]] && have nmap; then
+    local -a png; sweep_opts png
+    run_tool "nmap ping sweep (listed targets)" "$RAW/11-nmap-sweep.txt" \
+      as_root nmap "${png[@]}" -oG "$RAW/11-nmap-sweep.gnmap" -iL "$WORK/sweep.list" || true
+  fi
+
+  run_tool "kernel neighbour table" "$RAW/12-neigh.txt" ip neigh show || true
+  QUIET_HOSTS=1 build_host_list
+
+  HOST_COUNT=$(python3 "$BASE_DIR/lib/targets_util.py" finish "$WORK/targets.in" "$WORK" "$RAW" "${TARGETS_PN:-0}")
+  cp "$WORK/hosts.tsv" "$RAW/13-hosts-merged.tsv"
+  cp "$WORK/targets.tsv" "$RAW/15-targets-result.tsv"
+  ok "$HOST_COUNT host(s) up from the list"
+  local st
+  for st in no_response unresolved not_seen; do
+    local c; c=$(awk -F'\t' -v s="$st" '$5==s' "$WORK/targets.tsv" | wc -l)
+    (( c > 0 )) && warn "$c listed target(s): ${st//_/ }"
+  done
+  return 0
 }
 
 # Merge every source into $WORK/hosts.tsv : ip <tab> mac <tab> vendor
@@ -69,7 +127,7 @@ build_host_list() {
 
   HOST_COUNT=$(wc -l <"$WORK/hosts.tsv")
   cut -f1 "$WORK/hosts.tsv" >"$WORK/hosts.list"
-  ok "$HOST_COUNT live host(s) found"
+  [[ "${QUIET_HOSTS:-0}" == 1 ]] || ok "$HOST_COUNT live host(s) found"
   cp "$WORK/hosts.tsv" "$RAW/13-hosts-merged.tsv"
 }
 
@@ -174,6 +232,7 @@ stage_deep() {
     warn "no root - using TCP connect scan, no OS detection"
   fi
   [[ "$DO_VULN" == 1 ]] && opts+=(--script "default,vuln") || opts+=(-sC)
+  [[ "${TARGETS_PN:-0}" == 1 ]] && opts+=(-Pn)   # listed hosts that ignore ping
 
   mkdir -p "$RAW/hosts"
   local ip safe running=0 dispatched=0
@@ -185,9 +244,12 @@ stage_deep() {
     done
     safe="${ip//./_}"
     (
-      timeout "$HOST_SCAN_TIMEOUT" \
-        as_root nmap "${opts[@]}" -oN "$RAW/hosts/$safe.txt" -oX "$RAW/hosts/$safe.xml" "$ip" \
-        >/dev/null 2>&1 || true
+      # timeout goes inside as_root: as_root is a shell function, and
+      # `timeout as_root ...` fails with "No such file" (exit 127)
+      as_root timeout "$HOST_SCAN_TIMEOUT" \
+        nmap "${opts[@]}" -oN "$RAW/hosts/$safe.txt" -oX "$RAW/hosts/$safe.xml" "$ip" \
+        >/dev/null 2>"$RAW/hosts/$safe.err" || true
+      [[ -s "$RAW/hosts/$safe.err" ]] || rm -f -- "$RAW/hosts/$safe.err"
     ) &
     running=$(( running + 1 ))
     dispatched=$(( dispatched + 1 ))

@@ -62,11 +62,91 @@ document.addEventListener("DOMContentLoaded",function(){
   function opts(){
     if(scope==="host") return [["mode","Mode",[["workstation","Workstation (this PC / laptop)"],["server","Server (hosts services)"]]],
                                ["scan_type","Depth",[["quick","Quick"],["full","Full (all ports, slower)"]]]];
-    if(scope==="network") return [["scan_type","Depth",[["quick","Quick (find devices, minutes)"],["full","Full (per-device port scan, can take hours)"]]]];
     return [["provider","Provider",Object.keys(PROV).map(k=>
       [k, PROV[k]+(k!=="all"&&ENV&&!ENV.clouds[k]?" (not installed)":"")])]];
   }
+  // ── network: targets + checklist ──────────────────────────────────────────
+  const NET={mode:"network", typed:"", files:[], parsed:null, opts:{names:true,ports:"off",vuln:false,wan:true,pn:false}, wanTouched:false};
+  const KIND={ip:"IP",cidr:"range",mac:"MAC",host:"hostname"};
+  function netEntries(){
+    const e=NET.typed.split(/\r?\n/).map(line=>({line,source:"typed"}));
+    NET.files.forEach(f=>f.lines.forEach(line=>e.push({line,source:f.name})));
+    return e;
+  }
+  function renderNetwork(){
+    const o=NET.opts, t=NET.mode==="targets";
+    $("opts").innerHTML=`
+      <div class="netbox">
+        <div class="field"><label>Targets</label>
+          <div class="seg" id="tmode">
+            <button data-m="network" class="${t?"":"on"}">Whole local network</button>
+            <button data-m="targets" class="${t?"on":""}">Specific targets</button></div></div>
+        <div id="tpanel" style="display:${t?"block":"none"}">
+          <textarea id="tlist" rows="6" spellcheck="false" placeholder="One per line: IP, range, MAC address or hostname&#10;172.16.0.30&#10;172.16.4.0/24&#10;bc:24:11:aa:bb:cc&#10;nas.lan">${esc(NET.typed)}</textarea>
+          <div class="trow">
+            <label class="filebtn">Load file…<input type="file" id="tfile" accept=".txt,.csv,text/plain,text/csv" multiple></label>
+            <span class="muted">ip.txt, mac.txt, hostnames.txt or .csv (first column). <code>#</code> starts a comment.</span></div>
+          <div id="tfiles">${NET.files.map((f,i)=>`<span class="chip">${esc(f.name)} · ${f.lines.length} lines <button data-i="${i}" title="Remove">×</button></span>`).join("")}</div>
+          <div id="tsum" class="tsum"></div>
+        </div>
+        <div class="field"><label>What to scan</label>
+          <div class="checks">
+            <label class="chk"><input type="checkbox" checked disabled> Find live hosts</label>
+            <label class="chk"><input type="checkbox" data-o="names" ${o.names?"checked":""}> Names (mDNS, NetBIOS, UPnP, LLDP, reverse DNS)</label>
+            <label class="chk">Ports and services
+              <select data-o="ports">
+                <option value="off" ${o.ports==="off"?"selected":""}>Off (quick, minutes)</option>
+                <option value="top" ${o.ports==="top"?"selected":""}>Top 1000 ports</option>
+                <option value="all" ${o.ports==="all"?"selected":""}>All 65535 ports (slow)</option></select></label>
+            <label class="chk"><input type="checkbox" data-o="vuln" ${o.vuln?"checked":""} ${o.ports==="off"?"disabled":""}> Vulnerability scripts (slow, noisy; needs ports)</label>
+            <label class="chk"><input type="checkbox" data-o="wan" ${o.wan?"checked":""}> Gateway and internet path</label>
+            <label class="chk" style="display:${t?"flex":"none"}"><input type="checkbox" data-o="pn" ${o.pn?"checked":""}> Scan listed hosts even if they don't answer ping</label>
+          </div></div>
+      </div>`;
+    $("tmode").querySelectorAll("button").forEach(b=>b.onclick=()=>{
+      NET.mode=b.dataset.m;
+      if(!NET.wanTouched) NET.opts.wan = NET.mode!=="targets";
+      renderNetwork(); renderReady(); });
+    $("opts").querySelectorAll("[data-o]").forEach(el=>el.onchange=()=>{
+      const k=el.dataset.o; NET.opts[k]= el.type==="checkbox"?el.checked:el.value;
+      if(k==="wan") NET.wanTouched=true;
+      if(k==="ports"&&el.value==="off") NET.opts.vuln=false;
+      renderNetwork(); });
+    const ta=$("tlist"); let tmr=null;
+    ta.oninput=()=>{ NET.typed=ta.value; clearTimeout(tmr); tmr=setTimeout(parseTargets,400); };
+    $("tfile").onchange=async ev=>{
+      for(const f of ev.target.files){
+        if(f.size>1024*1024){ alert(`${f.name} is larger than 1 MB.`); continue; }
+        const text=await f.text();
+        NET.files=NET.files.filter(x=>x.name!==f.name);
+        NET.files.push({name:f.name, lines:text.split(/\r?\n/)});
+      }
+      renderNetwork(); parseTargets();
+    };
+    $("tfiles").querySelectorAll("button").forEach(b=>b.onclick=()=>{ NET.files.splice(+b.dataset.i,1); renderNetwork(); parseTargets(); });
+    renderTsum();
+  }
+  async function parseTargets(){
+    try{ NET.parsed=await api("/api/targets/parse",{targets:netEntries()}); }
+    catch(e){ NET.parsed={error:e.message}; }
+    renderTsum(); renderReady();
+  }
+  function renderTsum(){
+    const box=$("tsum"); if(!box) return; const p=NET.parsed;
+    if(!p){ box.innerHTML=""; return; }
+    if(p.error){ box.innerHTML=`<span class="bad">✗</span> ${esc(p.error)}`; return; }
+    const parts=Object.keys(KIND).filter(k=>p.counts[k]).map(k=>`${p.counts[k]} ${KIND[k]}${p.counts[k]>1?"s":""}`);
+    let h=p.total?`<div><span class="ok">✓</span> ${p.total} target(s): ${parts.join(" · ")}${p.counts.cidr?` (${p.addresses} addresses)`:""}</div>`:`<div class="muted">No targets yet.</div>`;
+    if(p.errors.length){
+      h+=`<div><span class="warn">!</span> ${p.errors.length} line(s) will be skipped:</div><ul class="skips">`+
+        p.errors.slice(0,12).map(e=>`<li><code>${esc(e.line||"(limit)")}</code> ${e.source&&e.source!=="typed"?`<span class="muted">${esc(e.source)}</span> `:""}${esc(e.error)}</li>`).join("")+
+        (p.errors.length>12?`<li class="muted">… and ${p.errors.length-12} more</li>`:"")+`</ul>`;
+    }
+    box.innerHTML=h;
+  }
+
   function renderOpts(){
+    if(scope==="network"){ renderNetwork(); renderReady(); return; }
     $("opts").innerHTML=opts().map(([k,label,vals])=>
       `<div class="field"><label>${label}</label><select data-k="${k}">`+
       vals.map(([v,t])=>`<option value="${v}">${t}</option>`).join("")+`</select></div>`).join("");
@@ -85,6 +165,11 @@ document.addEventListener("DOMContentLoaded",function(){
     if(scope==="network"){
       if(!ENV.nd_tool){ ok=false; lines.push('<span class="bad">✗</span> network-discovery tool not found in <code>discovery/</code> next to the panel.'); }
       else lines.push('<span class="ok">✓</span> network-discovery tool found.');
+      if(NET.mode==="targets"){
+        const p=NET.parsed, limit=p&&p.errors&&p.errors.some(e=>!e.line);
+        if(!p||!p.total||limit){ ok=false; lines.push('<span class="bad">✗</span> '+(limit?'The list is over the size limit.':'Add at least one valid target.')); }
+        if(p&&p.counts&&p.counts.mac) lines.push('<span class="muted">MAC addresses are found by sweeping the local network first; they only work for devices on this network segment.</span>');
+      }
       lines.push(ENV.admin
         ? '<span class="ok">✓</span> Admin rights available: ARP sweep and OS detection included.'
         : '<span class="warn">!</span> No admin rights: the ARP sweep and OS detection will be skipped. Device and port discovery still run. '+unlock);
@@ -107,7 +192,8 @@ document.addEventListener("DOMContentLoaded",function(){
   let pollTimer=null, curId=null;
   $("startBtn").onclick=async()=>{
     const o={scope};
-    $("opts").querySelectorAll("select").forEach(s=>o[s.dataset.k]=s.value);
+    if(scope==="network"){ o.target_mode=NET.mode; o.options={...NET.opts}; if(NET.mode==="targets") o.targets=netEntries(); }
+    else $("opts").querySelectorAll("select").forEach(s=>o[s.dataset.k]=s.value);
     $("startBtn").disabled=true;
     let j; try{ j=await api("/api/scan/start",o); }catch(e){ alert("Could not start the scan: "+e.message); $("startBtn").disabled=false; return; }
     curId=j.scan_id;

@@ -112,3 +112,28 @@ details.f pre{white-space:pre-wrap;font:12.5px/1.5 ui-monospace,Menlo,Consolas,m
 .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-bottom:6px}
 .kpi{background:var(--surface-1);border:1px solid var(--border);border-radius:var(--radius);padding:12px 14px}
 .kpi .v{font-size:22px;font-weight:700;font-variant-numeric:tabular-nums}.kpi .l{font-size:12px;color:var(--text-muted)}
+
+/* scan page: network targets + checklist */
+.netbox{display:flex;flex-direction:column;gap:14px;width:100%}
+.seg{display:inline-flex;border:1px solid var(--border);border-radius:8px;overflow:hidden;width:max-content;max-width:100%}
+.seg button{background:var(--plane);color:var(--text-secondary);border:0;padding:8px 14px;font:inherit;font-size:13px;cursor:pointer}
+.seg button+button{border-left:1px solid var(--border)}
+.seg button.on{background:var(--series-1);color:#fff}
+#tpanel textarea{width:100%;box-sizing:border-box;background:var(--plane);color:var(--text-primary);border:1px solid var(--border);
+  border-radius:8px;padding:9px 11px;font:12.5px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;resize:vertical}
+.trow{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-top:8px;font-size:12.5px}
+.trow code{background:var(--plane);border:1px solid var(--border);border-radius:4px;padding:0 4px}
+.filebtn{border:1px solid var(--border);border-radius:8px;padding:6px 12px;cursor:pointer;font-size:13px;background:var(--plane)}
+.filebtn:hover{border-color:var(--series-1)}
+.filebtn input{display:none}
+#tfiles{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.chip{font-size:12px;border:1px solid var(--border);border-radius:999px;padding:2px 4px 2px 10px;color:var(--text-secondary)}
+.chip button{background:none;border:0;color:var(--text-muted);cursor:pointer;font-size:14px;padding:0 4px}
+.tsum{margin-top:8px;font-size:13px;color:var(--text-secondary);display:flex;flex-direction:column;gap:3px}
+.tsum .ok{color:var(--good);font-weight:700}.tsum .warn{color:var(--serious);font-weight:700}.tsum .bad{color:var(--critical);font-weight:700}
+.skips{margin:2px 0 0 18px;padding:0;font-size:12.5px}
+.skips code{font-size:12px}
+.checks{display:flex;flex-direction:column;gap:7px}
+.field label.chk{display:flex;align-items:center;gap:8px;font-size:13.5px;color:var(--text-primary);flex-wrap:wrap;text-transform:none;letter-spacing:normal}
+.chk input[type=checkbox]{min-width:0;width:16px;height:16px;padding:0;accent-color:var(--series-1)}
+.chk select{min-width:0;padding:5px 8px}

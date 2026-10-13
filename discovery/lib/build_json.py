@@ -133,6 +133,16 @@ if cdir and os.path.isdir(cdir):
         cloud_total += n
 
 # ---------------------------------------------------------------- notable
+# With --targets only the requested hosts belong in the report: mDNS / SSDP /
+# NetBIOS answers name them but must not add other hosts from the network.
+targets = []
+if env("TARGETS"):
+    listed = {(l.split("\t") + [""])[0].strip() for l in lines(env("HOSTS"))}
+    hosts = {ip: h for ip, h in hosts.items() if ip in listed}
+    for line in lines(env("TARGETS")):
+        p = (line.split("\t") + [""] * 6)[:6]
+        targets.append(dict(zip(("kind", "value", "source", "ip", "status", "detail"), p)))
+
 notable = []
 RISKY = {"23": "telnet", "21": "ftp", "445": "smb", "3389": "rdp",
          "5900": "vnc", "1900": "upnp", "161": "snmp", "11211": "memcached",
@@ -172,6 +182,15 @@ for h in hosts.values():
     else:
         os_counts["unidentified"] += 1
 
+# ---------------------------------------------------------------- listed targets
+if targets:
+    missing = [t for t in targets if t["status"] in ("no_response", "unresolved", "not_seen")]
+    if missing:
+        notable.append({"level": "info",
+                        "text": f"{len(missing)} listed target(s) not found: "
+                                + ", ".join(t["value"] for t in missing[:5])
+                                + (" ..." if len(missing) > 5 else "")})
+
 host_list = sorted(hosts.values(),
                    key=lambda h: [int(x) for x in h["ip"].split(".")] if re.match(r"^\d+\.\d+\.\d+\.\d+$", h["ip"]) else [0, 0, 0, 0])
 
@@ -179,7 +198,9 @@ out = {
     "meta": {
         "run_id": env("META_ID", ""),
         "started": env("META_START", ""),
-        "target": env("META_CIDR", ""),
+        "target": (f"{len(targets)} listed target(s)" if targets else env("META_CIDR", "")),
+        "mode": "targets" if targets else "network",
+        "local_net": env("META_CIDR", ""),
         "interface": env("META_IFACE", ""),
         "gateway": env("META_GW", ""),
         "scanner_ip": env("META_SELF", ""),
@@ -198,5 +219,6 @@ out = {
     "os_families": [{"label": k, "count": v} for k, v in os_counts.most_common(8)],
     "cloud": cloud,
     "notable": notable,
+    "targets": targets,
 }
 print(json.dumps(out, indent=2))

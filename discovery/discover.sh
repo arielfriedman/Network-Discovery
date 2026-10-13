@@ -5,6 +5,9 @@
 #
 # Usage: ./discover.sh [options]
 #   --target CIDR     scan this range instead of the auto-detected one
+#   --targets FILE    scan only the IPs / ranges / MACs / hostnames in FILE
+#                     (one per line; see docs/SCAN_BUILDER.md)
+#   --pn              with --targets: scan listed hosts even if they ignore ping
 #   --quick           discovery + passive only; no per-host deep scan
 #   --deep            scan all 65535 ports instead of the top 1000 (slow)
 #   --auth            enable SNMP/SSH collection (asks for credentials)
@@ -42,6 +45,8 @@ OUT_BASE="$BASE_DIR/reports"
 while (( $# )); do
   case "$1" in
     --target)       TARGET_CIDR="${2:?--target needs a CIDR}"; shift 2 ;;
+    --targets)      TARGETS_RAW="${2:?--targets needs a file}"; shift 2 ;;
+    --pn)           TARGETS_PN=1; shift ;;
     --quick)        DO_DEEP=0; shift ;;
     --deep)         NMAP_PORTS="-p-"; shift ;;
     --auth)         DO_AUTH=1; shift ;;
@@ -60,7 +65,30 @@ while (( $# )); do
   esac
 done
 
-trap 'sudo_keepalive_stop; cleanup' EXIT INT TERM
+trap 'sudo_keepalive_stop; cleanup' EXIT INT
+# On TERM (the panel stopped or died) also stop nmap & co. When we lead our own
+# process group (as the panel starts us) take the whole group down with us.
+on_term() {
+  trap - TERM
+  sudo_keepalive_stop; cleanup
+  [[ "$(ps -o pgid= -p $$ 2>/dev/null | tr -d ' ')" == "$$" ]] && kill -TERM -- "-$$" 2>/dev/null
+  exit 143
+}
+trap on_term TERM
+
+# Started by the panel: if the panel dies, stop the whole scan. bash runs its
+# TERM trap only after the current foreground tool exits (an nmap sweep can
+# take minutes), so a watcher signals the process group directly instead.
+# Double fork: the watcher must not be our child, or the plain `wait` in the
+# deep-scan stage would wait for it forever. It ends by itself within 2 s of
+# this script ending.
+if [[ -n "${ND_PARENT_PID:-}" && "$(ps -o pgid= -p $$ 2>/dev/null | tr -d ' ')" == "$$" ]]; then
+  ( (
+    trap - TERM
+    while kill -0 "$ND_PARENT_PID" 2>/dev/null && kill -0 $$ 2>/dev/null; do sleep 2; done
+    kill -0 $$ 2>/dev/null && kill -TERM -- "-$$" 2>/dev/null
+  ) </dev/null >/dev/null 2>&1 & )
+fi
 make_secure_tmp
 
 # ---------------------------------------------------------------- banner
@@ -110,11 +138,17 @@ n=ipaddress.ip_network(sys.argv[1]); print(n.num_addresses)" "$TARGET_CIDR")
 printf '  interface : %s\n' "$IFACE"
 printf '  this host : %s\n' "$SELF_IP"
 printf '  gateway   : %s\n' "$GATEWAY"
-printf '  target    : %s  (%s addresses)\n\n' "$TARGET_CIDR" "$SIZE"
+if [[ -n "${TARGETS_RAW:-}" ]]; then
+  [[ -r "$TARGETS_RAW" ]] || die "cannot read target file: $TARGETS_RAW"
+  printf '  local net : %s  (used to find MAC targets)\n' "$TARGET_CIDR"
+  printf '  targets   : %s\n\n' "$TARGETS_RAW"
+else
+  printf '  target    : %s  (%s addresses)\n\n' "$TARGET_CIDR" "$SIZE"
+fi
 
 check_scope
 
-if (( SIZE > 4096 )) && [[ "$ASSUME_YES" != 1 ]]; then
+if (( SIZE > 4096 )) && [[ "$ASSUME_YES" != 1 && -z "${TARGETS_RAW:-}" ]]; then
   warn "$TARGET_CIDR covers $SIZE addresses; the sweep will take a few minutes."
   ask_yes_no "Continue?" y || exit 0
 fi
@@ -130,6 +164,16 @@ RUN_LOG="$RUN_DIR/run.log"
 mkdir -p "$RAW" "$WORK"
 : >"$RUN_LOG"
 info "run directory: $RUN_DIR"
+
+if [[ -n "${TARGETS_RAW:-}" ]]; then
+  # same validation as the dashboard: private addresses only, no option-like lines
+  TARGETS_FILE="$WORK/targets.norm"
+  python3 "$BASE_DIR/lib/targets_util.py" normalize "$TARGETS_RAW" "$BASE_DIR/config/settings.conf" \
+      >"$TARGETS_FILE" 2>"$WORK/targets.skipped" || true
+  while IFS= read -r l; do warn "$l"; done <"$WORK/targets.skipped"
+  [[ -s "$TARGETS_FILE" ]] || die "no usable targets in $TARGETS_RAW"
+  info "$(wc -l <"$TARGETS_FILE") target(s) accepted"
+fi
 
 init_sudo
 sudo_keepalive_start

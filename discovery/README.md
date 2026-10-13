@@ -16,8 +16,35 @@ Everything is local. No agent, no backend, no telemetry.
 ./discover.sh                # scan the network you are on
 ./discover.sh --quick        # discovery only, no per-host port scan
 ./discover.sh --auth --vault # also log in to hosts, using stored credentials
+./discover.sh --targets ip.txt        # only the hosts in the file (see below)
 ./vault.sh init              # set up the encrypted credential store
 ```
+
+## Scanning a list of targets
+
+`--targets FILE` scans only what is in the file instead of the whole network.
+One entry per line; the kind is detected automatically:
+
+```
+# comments and blank lines are ignored; CSV files use the first column
+172.16.0.30            an IP address
+172.16.4.0/24          a range
+bc:24:11:aa:bb:cc      a MAC address (also BC-24-11-AA-BB-CC or bc24.11aa.bbcc)
+nas.lan                a hostname
+```
+
+- MAC addresses are found by sweeping the local range first, so they only
+  work for devices on the same network segment as the scanner.
+- Hostnames are resolved with the system resolver; names that don't resolve
+  are reported, not dropped.
+- Public addresses, option-like lines (`-oX`) and CSV headers are skipped
+  with a message. Limits: 4096 entries, 65,536 addresses.
+- `--pn` also scans listed hosts that don't answer the ping sweep.
+- The report's *Listed targets* section shows what became of every line
+  (`up`, `assumed_up`, `no_response`, `unresolved`, `not_seen`).
+
+The dashboard's Scan page does the same with typed lists or uploaded files.
+Design: [docs/SCAN_BUILDER.md](../docs/SCAN_BUILDER.md).
 
 ## What it does, in stages
 

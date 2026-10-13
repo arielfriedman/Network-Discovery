@@ -12,6 +12,7 @@ build_json() {
   CLOUDDIR="$RAW/cloud" AWSOPEN="$WORK/aws-open-sgs.tsv" \
   META_CIDR="$TARGET_CIDR" META_IFACE="$IFACE" META_GW="$GATEWAY" \
   META_START="$RUN_START_ISO" META_ID="$RUN_ID" META_SELF="$SELF_IP" \
+  TARGETS="${TARGETS_FILE:+$WORK/targets.tsv}" \
   python3 "$BASE_DIR/lib/build_json.py" >"$RUN_DIR/findings.json"
   ok "findings.json written"
 }
@@ -28,7 +29,12 @@ build_text_report() {
     printf 'Finished    : %s\n' "$(date -Is)"
     printf 'Duration    : %s\n' "$(fmt_duration $(( SECONDS - RUN_START_SEC )))"
     printf 'Scanned by  : %s@%s (%s)\n' "$USER" "$(hostname)" "$SELF_IP"
-    printf 'Target      : %s on %s\n' "$TARGET_CIDR" "$IFACE"
+    if [[ -n "${TARGETS_FILE:-}" ]]; then
+      printf 'Target      : %s listed target(s) from %s, on %s\n' \
+        "$(wc -l <"$TARGETS_FILE")" "$(basename "$TARGETS_RAW")" "$IFACE"
+    else
+      printf 'Target      : %s on %s\n' "$TARGET_CIDR" "$IFACE"
+    fi
     printf 'Gateway     : %s\n' "$GATEWAY"
     printf '\n'
 
@@ -49,6 +55,12 @@ if d.get("notable"):
         print(f"    [{n['level'].upper():<4}] {n['text']}")
 PYEOF
     printf '\n'
+
+    if [[ -n "${TARGETS_FILE:-}" ]]; then
+      printf -- '---- LISTED TARGETS --------------------------------------------\n'
+      awk -F'\t' '{printf "  %-5s %-28s %-12s %-16s %s\n", $1, $2, $5, $4, $6}' "$WORK/targets.tsv"
+      printf '\n'
+    fi
 
     printf -- '---- HOSTS -----------------------------------------------------\n'
     python3 - "$RUN_DIR/findings.json" <<'PYEOF'

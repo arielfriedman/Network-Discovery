@@ -34,6 +34,7 @@ import scanner  # noqa: F401 — registers modules
 from scanner import ScanSession, ScanOrchestrator, MODULE_REGISTRY
 from reporters import generate_dashboard
 import db
+import targets as tg
 from devices import manager as devmgr
 from devices.base import DeviceError, PinMismatch, PinRequired
 
@@ -47,6 +48,8 @@ PAGES = {"/": "index.html", "/index.html": "index.html",
 CTYPES = {".html": "text/html; charset=utf-8", ".css": "text/css; charset=utf-8",
           ".js": "text/javascript; charset=utf-8", ".svg": "image/svg+xml"}
 ND_DIR = APP_DIR.parent / "discovery"  # network/cloud tool, same repo
+ND_SETTINGS = ND_DIR / "config" / "settings.conf"
+MAX_BODY = 2 * 1024 * 1024             # target lists are the largest request
 
 # Per-launch secret the panel's own pages send with every change request.
 # Another website open in the same browser cannot read it, so it cannot make
@@ -215,7 +218,8 @@ def run_shell_scan(sid: str, opts: dict) -> None:
         return
 
     args = ["bash", "discover.sh", "--yes", "--no-install"]
-    env = dict(os.environ, ND_PROGRESS="1", ND_NONINTERACTIVE="1")
+    # ND_PARENT_PID: discover.sh stops itself and its tools if the panel dies
+    env = dict(os.environ, ND_PROGRESS="1", ND_NONINTERACTIVE="1", ND_PARENT_PID=str(os.getpid()))
     if scope == "cloud":
         args.append("--cloud-only")
         prov = opts.get("provider", "all")
@@ -223,10 +227,27 @@ def run_shell_scan(sid: str, opts: dict) -> None:
             env["CLOUD_PROVIDERS"] = prov
     else:
         args.append("--no-cloud")
-        if opts.get("scan_type", "quick") == "quick":
+        o = opts.get("options") or {}
+        if o.get("ports", "off") == "off":
             args.append("--quick")
+        elif o.get("ports") == "all":
+            args.append("--deep")
+        if o.get("vuln") and o.get("ports", "off") != "off":
+            args.append("--vuln")
+        if not o.get("names", True):
+            args.append("--no-passive")
+        if not o.get("wan", True):
+            args.append("--no-wan")
+        if opts.get("_targets"):
+            tfile = REPORTS / f"{sid}-targets.txt"
+            tg.write_file(tfile, opts["_targets"])
+            args += ["--targets", str(tfile)]
+            if o.get("pn"):
+                args.append("--pn")
     _log(sid, "$ " + " ".join(args))
-    db.scan_started(sid, scope, None, None, opts.get("scan_type") if scope == "network" else opts.get("provider", "all"))
+    db.scan_started(sid, scope, None, None,
+                    opts.get("scan_type") if scope == "network" else opts.get("provider", "all"),
+                    options=opts.get("options"), target_spec=opts.get("target_spec"))
 
     try:
         proc = subprocess.Popen(
@@ -280,6 +301,7 @@ def run_shell_scan(sid: str, opts: dict) -> None:
                 last_fail = line[6:].strip()
             _log(sid, line)
     proc.wait()
+    (REPORTS / f"{sid}-targets.txt").unlink(missing_ok=True)
 
     with LOCK:
         s = SCANS[sid]
@@ -327,10 +349,46 @@ SCOPE_RUNNERS = {
 }
 
 
+class BadRequest(ValueError):
+    def __init__(self, msg, detail=None):
+        super().__init__(msg); self.detail = detail
+
+
+def network_options(body: dict) -> dict:
+    """The network checklist, from what the page sent. Older pages send only
+    scan_type quick/full, which maps to ports off/top."""
+    o = body.get("options") if isinstance(body.get("options"), dict) else {}
+    ports = o.get("ports", "top" if body.get("scan_type") == "full" else "off")
+    targets_mode = body.get("target_mode") == "targets"
+    return {"names": bool(o.get("names", True)),
+            "ports": ports if ports in ("off", "top", "all") else "off",
+            "vuln": bool(o.get("vuln", False)),
+            "wan": bool(o.get("wan", not targets_mode)),
+            "pn": bool(o.get("pn", False)) and targets_mode}
+
+
 def start_scan(scope: str, opts: dict, source_ip: str | None = None) -> str:
     opts = dict(opts); opts["scope"] = scope
+    if scope == "network":
+        opts["options"] = network_options(opts)
+        opts["scan_type"] = "quick" if opts["options"]["ports"] == "off" else "full"
+        if opts.get("target_mode") == "targets":
+            r = tg.parse(opts.get("targets") if isinstance(opts.get("targets"), list) else [],
+                         tg.allowed_prefixes(ND_SETTINGS))
+            limits = [e["error"] for e in r["errors"] if not e["line"]]
+            if limits:
+                raise BadRequest("; ".join(limits), r["errors"])
+            if not r["targets"]:
+                raise BadRequest("no usable targets in the list", r["errors"])
+            opts["_targets"] = r["targets"]
+            opts["target_spec"] = {"mode": "targets", "counts": r["counts"], "addresses": r["addresses"],
+                                   "files": sorted({t["source"] for t in r["targets"]}),
+                                   "skipped": len(r["errors"])}
+        else:
+            opts["target_spec"] = {"mode": "network"}
+    opts.pop("targets", None)                     # the raw list: big, and already parsed
     sid = _new_scan(scope, opts)
-    db.log("scan.start", sid, opts, source_ip)
+    db.log("scan.start", sid, {k: v for k, v in opts.items() if not k.startswith("_")}, source_ip)
     runner = SCOPE_RUNNERS.get(scope, run_host_scan)
     threading.Thread(target=runner, args=(sid, opts), daemon=True).start()
     return sid
@@ -387,6 +445,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def _body(self) -> dict:
         length = int(self.headers.get("Content-Length") or 0)
+        if length > MAX_BODY:
+            return {}
         try:
             b = json.loads(self.rfile.read(length) or "{}")
             return b if isinstance(b, dict) else {}
@@ -480,8 +540,18 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/scan/start":
             body = self._body()
             scope = body.get("scope", "host")
-            sid = start_scan(scope, body, self.client_address[0])
+            try:
+                sid = start_scan(scope, body, self.client_address[0])
+            except BadRequest as e:
+                return self._send(400, {"error": str(e), "errors": e.detail or []})
             return self._send(200, {"scan_id": sid})
+        if path == "/api/targets/parse":
+            body = self._body()
+            r = tg.parse(body.get("targets") if isinstance(body.get("targets"), list) else [],
+                         tg.allowed_prefixes(ND_SETTINGS))
+            return self._send(200, {"counts": r["counts"], "addresses": r["addresses"],
+                                    "total": len(r["targets"]), "errors": r["errors"][:200],
+                                    "max_lines": tg.MAX_LINES, "max_addresses": tg.MAX_ADDRESSES})
         if path.startswith("/api/scan/") and path.endswith("/stop"):
             sid = path.split("/")[3]
             return self._send(200, {"stopped": stop_scan(sid)})
@@ -560,6 +630,14 @@ def main():
     print(f"SentinelScan control panel → {url}")
     print(f"  host engine: {len(MODULE_REGISTRY)} modules")
     print(f"  network/cloud tool: {ND_DIR}  ({'found' if (ND_DIR/'discover.sh').exists() else 'not found'})")
+    if db.database_url():
+        try:   # an update may bring new tables; apply them so saving keeps working
+            new = db.migrate()
+            print("  database: ready" + (f" (applied {', '.join(new)})" if new else ""))
+        except Exception as e:  # noqa: BLE001
+            print(f"  database: not available ({str(e).strip().splitlines()[0] if str(e).strip() else e})")
+    else:
+        print("  database: not configured (run install.sh); scans are not saved")
     print("  Ctrl-C to stop.")
     try:
         webbrowser.open(url)
