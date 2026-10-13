@@ -247,7 +247,7 @@ def run_shell_scan(sid: str, opts: dict) -> None:
             s = SCANS[sid]
             if line.startswith("@@cmd "):
                 argv = line[6:]
-                s["cmd"] = argv; s["tool"] = _tool_name(argv)
+                s["cmd"] = argv; s["tool"] = _tool_name(argv); s["cmd_since"] = time.time()
                 _log(sid, f"    $ {argv}")
                 continue
             if line.startswith("== "):
@@ -437,6 +437,7 @@ class Handler(BaseHTTPRequestHandler):
                     "pct": s["pct"], "current": s["current"],
                     "module": s["module"], "activity": s["activity"],
                     "tool": s["tool"], "cmd": s["cmd"], "note": s["note"],
+                    "cmd_secs": int(time.time() - s["cmd_since"]) if s["cmd"] and s.get("cmd_since") else None,
                     "stopping": s["stopping"],
                     "done": s["done"], "total": s["total"], "counts": s["counts"],
                     "log": s["log"][-80:], "has_result": bool(s["result_html"]),

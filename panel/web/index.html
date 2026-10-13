@@ -127,7 +127,8 @@ document.addEventListener("DOMContentLoaded",function(){
     $("barFill").style.width=(s.pct||0)+"%";
     $("nowPct").textContent=(s.pct||0)+"%";
     $("nowMod").textContent=s.module||s.current||s.status;
-    $("nowAct").textContent=s.activity||"";
+    const secs=s.cmd_secs, el=secs>=10?` (running ${secs>=60?Math.floor(secs/60)+"m ":""}${secs%60}s)`:"";
+    $("nowAct").textContent=(s.activity||"")+el;
     $("nowCmdText").textContent=s.cmd||(s.status==="running"?"working…":"");
     if(s.note){ $("noteBox").textContent=s.note; $("noteBox").style.display="block"; }
     $("logBox").textContent=(s.log||[]).join("\n"); $("logBox").scrollTop=1e9;

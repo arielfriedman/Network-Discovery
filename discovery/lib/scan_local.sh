@@ -17,7 +17,15 @@ stage_discover() {
 
   if have nmap; then
     local -a png=(-sn -n --max-retries 2 "-T$NMAP_TIMING")
-    can_root && png+=(-PR)   # ARP ping is both faster and more reliable on-LAN
+    if can_root; then
+      png+=(-PR)   # ARP ping is both faster and more reliable on-LAN
+    else
+      # Without root nmap falls back to TCP connect probes, and every empty
+      # address waits out ARP resolution. Default timing made a /19 take over
+      # 10 minutes; these limits finish it in about a minute, same hosts found.
+      png=(-sn -n --max-retries 1 "-T$NMAP_TIMING" --min-parallelism 100
+           --initial-rtt-timeout 200ms --max-rtt-timeout 400ms)
+    fi
     run_tool "nmap ping sweep" "$RAW/11-nmap-sweep.txt" \
       as_root nmap "${png[@]}" -oG "$RAW/11-nmap-sweep.gnmap" "$TARGET_CIDR" || true
   else
@@ -77,9 +85,9 @@ stage_passive() {
       timeout 25 avahi-browse -altrp || true
   fi
 
-  if have nbtscan; then
+  if have nbtscan && [[ -s "$WORK/hosts.list" ]]; then
     run_tool "NetBIOS names" "$RAW/21-netbios.txt" \
-      nbtscan -q -s $'\t' "$TARGET_CIDR" || true
+      timeout 120 nbtscan -q -s $'\t' -f "$WORK/hosts.list" || true
   fi
 
   run_tool "SSDP / UPnP discovery" "$RAW/22-ssdp.txt" python3 - <<'PYEOF' || true
