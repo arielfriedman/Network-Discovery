@@ -144,4 +144,7 @@ since the last scan", "which hosts appeared this week", "who changed this device
 5. **Import existing results** from `~/sentinelscan/reports/*.json` and network-discovery's `findings.json`.
 6. **Add login and roles** to the panel, using Part 1, and record every action in `user_activity`.
 7. **Add a history page:** past scans, trends, new or resolved findings.
-8. **Back up:** nightly `pg_dump` with retention (a systemd timer), and test a restore.
+8. **Back up:** nightly `pg_dump` with retention, and test a restore. **Done 2026-10-13:**
+   `panel/db_backup.py`, scheduled with the user's crontab rather than a systemd timer
+   (no root or lingering needed; `install.sh` turns it on, History page switches it),
+   restore tested into a fresh database.

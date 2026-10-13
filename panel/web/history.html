@@ -34,6 +34,19 @@
       <tbody id="scanRows"><tr><td colspan="8" class="empty">Loading…</td></tr></tbody>
     </table></div>
 
+    <div class="hhead"><h2>Database backups</h2>
+      <button class="btn ghost" id="bkRun">Back up now</button></div>
+    <div class="card bkbox">
+      <label class="chk"><input type="checkbox" id="bkSched"> Back up every night at 03:17</label>
+      <span class="muted" id="bkInfo"></span>
+      <div id="bkMsg"></div>
+      <div class="tbl-wrap"><table class="data">
+        <thead><tr><th>Backup</th><th>Taken</th><th class="num">Size</th><th></th></tr></thead>
+        <tbody id="bkRows"><tr><td colspan="4" class="empty">Loading…</td></tr></tbody></table></div>
+      <div class="muted">To restore one (replaces what is in the database now):
+        <code>pg_restore --clean --if-exists --no-owner -d "&lt;database_url from panel/settings.local.json&gt;" panel/backups/db/&lt;file&gt;</code></div>
+    </div>
+
     <h2>Activity log</h2>
     <div class="tbl-wrap"><table class="data">
       <thead><tr><th>When</th><th>Who</th><th>Action</th><th>Target</th><th>From</th></tr></thead>
@@ -148,6 +161,33 @@ document.addEventListener("DOMContentLoaded", () => {
       <td>${h.services.map(p => `${p.port}/${p.protocol} ${esc(p.service || "")}`).join(", ")}</td></tr>`).join("");
     history.replaceState(null, "", "#" + ref);
   }
+
+  const fmtSize = n => n > 1048576 ? (n / 1048576).toFixed(1) + " MB" : Math.max(1, Math.round(n / 1024)) + " KB";
+  async function loadBackups() {
+    let b;
+    try { b = await (await fetch("/api/db/backups")).json(); } catch (e) { return; }
+    const sc = b.schedule || {};
+    $("bkSched").checked = !!sc.enabled; $("bkSched").disabled = !sc.available || !b.db;
+    $("bkInfo").textContent = !b.db ? "Needs the database." : !sc.available ? "cron is not installed (sudo apt install cron)."
+      : `Keeps the newest ${b.keep}. Stored in panel/backups/db/ on this machine.` + (sc.enabled && !sc.up_to_date ? " The schedule points at an old location: switch it off and on again." : "");
+    $("bkRun").disabled = !b.db;
+    $("bkRows").innerHTML = b.backups.length ? b.backups.map(x => `<tr><td><code>${esc(x.name)}</code></td>
+      <td>${esc(fmtTime(x.created))}</td><td class="num">${fmtSize(x.size)}</td>
+      <td><a href="/api/db/backups/${encodeURIComponent(x.name)}/download">Download</a></td></tr>`).join("")
+      : '<tr><td colspan="4" class="empty">No backups yet.</td></tr>';
+  }
+  $("bkRun").onclick = async () => {
+    $("bkRun").disabled = true; $("bkMsg").textContent = "Backing up…";
+    try { const r = await api("/api/db/backups/run", {}); $("bkMsg").textContent = `Saved ${r.name} (${fmtSize(r.size)}).`; }
+    catch (e) { $("bkMsg").textContent = "Backup failed: " + e.message; }
+    $("bkRun").disabled = false; loadBackups();
+  };
+  $("bkSched").onchange = async () => {
+    try { await api("/api/db/backups/schedule", { enabled: $("bkSched").checked }); }
+    catch (e) { alert("Could not change the schedule: " + e.message); }
+    loadBackups();
+  };
+  loadBackups();
 
   async function del(body, question) {
     if (!confirm(question)) return null;

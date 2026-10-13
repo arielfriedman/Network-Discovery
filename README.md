@@ -91,7 +91,13 @@ Supported models and API details: [docs/DEVICE_MODELS.md](docs/DEVICE_MODELS.md)
 python3 panel/db.py status     # connected? which migrations ran?
 python3 panel/db.py migrate    # create / upgrade tables
 python3 panel/db.py import     # load earlier JSON reports
+python3 panel/db_backup.py run                 # back up now (panel/backups/db/, newest 14 kept)
+python3 panel/db_backup.py schedule on|off     # nightly at 03:17 via your crontab (install.sh turns it on)
 ```
+
+Restore a backup (replaces the current contents):
+`pg_restore --clean --if-exists --no-owner -d "<database_url>" panel/backups/db/<file>.dump`.
+The History page shows the backups, takes one on demand and switches the schedule.
 
 The connection string comes from `$SENTINEL_DATABASE_URL`, or `panel/settings.local.json`.
 Without a database the panel still works and saves scans as files; History stays empty.

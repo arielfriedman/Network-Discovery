@@ -34,6 +34,7 @@ import scanner  # noqa: F401 — registers modules
 from scanner import ScanSession, ScanOrchestrator, MODULE_REGISTRY
 from reporters import generate_dashboard
 import db
+import db_backup
 import targets as tg
 import creds as credmod        # discovery/lib/creds.py (path set up by targets)
 from devices import manager as devmgr
@@ -597,6 +598,22 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200 if got else 404, got or {"error": "not found"})
         if path == "/api/activity":
             return self._send(200, db.recent_activity(100))
+        if path == "/api/db/backups":
+            return self._send(200, {"backups": db_backup.list_backups(), "keep": db_backup.keep_count(),
+                                    "schedule": db_backup.schedule_status(), "db": db.ready()})
+        if path.startswith("/api/db/backups/") and path.endswith("/download"):
+            name = path.split("/")[4]
+            f = db_backup.BACKUP_DIR / name
+            if not db_backup.NAME_RE.match(name) or not f.is_file():
+                return self._send(404, {"error": "no such backup"})
+            data = f.read_bytes()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/octet-stream")
+            self.send_header("Content-Disposition", f'attachment; filename="{name}"')
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+            return None
         if path == "/api/credentials":
             return self._send(200, {"db": db.ready(), "credentials": db.list_credentials()})
         if path == "/api/env":
@@ -670,6 +687,12 @@ class Handler(BaseHTTPRequestHandler):
                                             "older_than_days": days, "all": body.get("all") is True},
                    self.client_address[0])
             return self._send(200, {"deleted": len(deleted), "files_removed": files})
+        if path == "/api/db/backups/run":
+            r = db_backup.run_backup()
+            return self._send(200 if r["ok"] else 500, r if r["ok"] else {"error": r["error"]})
+        if path == "/api/db/backups/schedule":
+            r = db_backup.schedule(bool(self._body().get("enabled")))
+            return self._send(200 if r.get("ok") else 500, r if r.get("ok") else {"error": r.get("error")})
         if path == "/api/credentials/forget":
             body = self._body()
             key, pw = str(body.get("vault_key") or ""), str(body.get("passphrase") or "")

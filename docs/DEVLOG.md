@@ -32,6 +32,58 @@ Entry template:
 
 ---
 
+## 2026-10-13 - Nightly database backups
+**Change:** `panel/db_backup.py`: `run` (pg_dump custom format to
+`panel/backups/db/sentinel-YYYYmmdd-HHMMSS.dump`, 0600, folder 0700, written
+as `.part` then renamed; prunes to the newest 14 or `backup_keep` in
+`settings.local.json`), `list`, `schedule on|off|status` (user crontab,
+03:17, tagged line; other cron jobs untouched; removes the crontab instead
+of leaving it empty). History page: *Database backups* section (list,
+download, *Back up now*, nightly switch, restore command). Panel:
+`GET /api/db/backups`, `GET /api/db/backups/<name>/download`,
+`POST /api/db/backups/run`, `POST /api/db/backups/schedule`. `install.sh`
+schedules it (new `--no-backup`). Activity log: `db.backup`,
+`db.backup.schedule`. Postgres roadmap step 8 marked done.
+**Why:** user asked to "add the db" - read as the nightly database backup
+from the open list (roadmap step 8).
+**Decisions:** crontab instead of the systemd timer the roadmap suggested:
+works for a normal user without root or `loginctl enable-linger`, and the
+panel can switch it. The password reaches pg_dump through a temporary
+pgpass file (0600, /dev/shm), never argv. No restore button in the panel:
+restoring replaces everything, so it stays a deliberate command.
+**Issues / errors:**
+- With a wrong password the message was libpq's last line, "password
+  retrieved from file /dev/shm/...", hiding the cause -> pick the FATAL /
+  error line and mask the temp path.
+- Found in the History screenshot (pre-existing): cloud scans were saved
+  with the local range (172.16.0.0/19) as their target, because a cloud-only
+  run still fills `meta.target` -> saved as "cloud accounts".
+**Verified (scratch Postgres 16, pg_dump 16.15):** two backups; `ps` sampled
+during the dump - password never in a command line; temp pgpass removed;
+wrong password -> clear error, no partial file; restore of a backup into a
+new database -> same scans, migrations and append-only trigger (activity
+differs by the one `db.backup` row written after the dump); prune to 2
+removed the 2 oldest. Schedule tested against a stand-in `crontab` (the real
+crontab was not touched): existing job kept, on twice -> one line, off ->
+only ours removed, empty -> crontab removed; the exact cron line run under
+`env -i` from the repo path with spaces -> backup written, logged. Panel:
+run without token 403; run, schedule, list; download byte-identical; path
+traversal attempts 404. Screenshot of the History section.
+**Not verified:** the real nightly run by cron on this machine (would
+change the user's crontab; `install.sh` or the History switch will turn it
+on).
+
+## 2026-10-13 - Scan builder step 3 paused
+**What happened:** while writing the first file of step 3 (VM tagging by
+MAC prefix, hypervisor detection, Proxmox inventory), the response was
+stopped by a safety check. The partial file
+(`discovery/lib/virt_api.py`, 3.2 KB, never committed) was deleted. Before
+that, the Proxmox API details had been checked against the official docs
+(token header `PVEAPIToken=USER@REALM!TOKENID=UUID`; `/cluster/resources?type=vm`
+fields; `/nodes/{node}/lxc/{vmid}/interfaces`; privilege-separated tokens
+need their own PVEAuditor ACL).
+**Status:** step 3 is not being continued in this session.
+
 ## 2026-10-13 - Ten more cloud providers
 **Change:** cloud scan now also covers DigitalOcean, Akamai/Linode, Hetzner
 Cloud, Vultr, Scaleway, Cloudflare, IBM Cloud (VPC), OVHcloud, Alibaba Cloud

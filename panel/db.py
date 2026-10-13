@@ -322,7 +322,8 @@ def save_network_scan(data: dict, kind: str = "network", status: str = "complete
                     for n in notable]
         counts = {s: sum(1 for f in findings if f["severity"] == s) for s in SEVERITIES}
         sid = _upsert_scan(
-            cur, ref, kind, target=meta.get("target") or None, status=status,
+            # a cloud-only run still records the local range in meta.target; it isn't the target
+            cur, ref, kind, target=(meta.get("target") or None) if kind != "cloud" else "cloud accounts", status=status,
             severity_counts=psycopg2.extras.Json(counts),
             summary=psycopg2.extras.Json({"stats": data.get("stats", {}), "meta": meta,
                                           "cloud": data.get("cloud", {})}),

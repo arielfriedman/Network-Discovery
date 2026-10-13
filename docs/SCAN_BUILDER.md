@@ -6,7 +6,7 @@ Status: steps 1 and 2 done (2026-10-13). Each step is logged in `DEVLOG.md`.
 |---|---|---|
 | 1 | Checklist of scan parts + targets by IP / CIDR / MAC / hostname, typed or uploaded (`ip.txt`, `mac.txt`, `hostnames.txt`) | done |
 | 2 | Credentials per system type, typed per scan, optional "remember in vault" | done |
-| 3 | VM tagging by MAC prefix + read-only Proxmox inventory | planned |
+| 3 | VM tagging by MAC prefix + read-only Proxmox inventory | paused (see DEVLOG 2026-10-13) |
 | 4 | vCenter / ESXi / Hyper-V / libvirt inventory | planned |
 
 ## Step 1 - checklist and targets

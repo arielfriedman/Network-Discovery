@@ -11,9 +11,11 @@
 #      reachable only from this machine
 #   4. saves the connection string to panel/settings.local.json (mode 600)
 #   5. creates the tables and imports any earlier scan reports
+#   6. schedules a nightly database backup (03:17, your crontab, last 14 kept)
 #
 # Options:
 #   --no-db       skip PostgreSQL (the panel works, without history)
+#   --no-backup   don't schedule the nightly database backup
 #   --no-tools    skip the network scanning tools (nmap, arp-scan, ...)
 #   --dry-run     print what would be done, change nothing
 #
@@ -24,11 +26,12 @@ set -euo pipefail
 REPO_URL="${SENTINEL_REPO:-https://gitlab.com/fritzizi/network-discovery.git}"
 DB_NAME=sentinel
 DB_USER=sentinel
-DO_DB=1 DO_TOOLS=1 DRY=0
+DO_DB=1 DO_TOOLS=1 DO_BACKUP=1 DRY=0
 for a in "$@"; do
   case "$a" in
     --no-db) DO_DB=0 ;;
     --no-tools) DO_TOOLS=0 ;;
+    --no-backup) DO_BACKUP=0 ;;
     --dry-run) DRY=1 ;;
     -h|--help) sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "unknown option: $a (try --help)" >&2; exit 2 ;;
@@ -152,6 +155,16 @@ EOF
     as_owner python3 panel/db.py migrate | sed 's/^/  /'
     as_owner python3 panel/db.py import  | sed 's/^/  /'
     as_owner python3 panel/db.py status  | sed 's/^/  /'
+
+    if (( DO_BACKUP )) && command -v crontab >/dev/null; then
+      if as_owner python3 panel/db_backup.py schedule on >/dev/null; then
+        ok "nightly database backup scheduled (03:17, panel/backups/db/, last 14 kept)"
+      else
+        warn "could not schedule the nightly backup; turn it on from the History page"
+      fi
+    elif (( DO_BACKUP )); then
+      warn "cron is not installed, so no nightly backup is scheduled (sudo apt install cron)"
+    fi
   fi
 else
   warn "skipping the database (--no-db): the panel runs, without history"
