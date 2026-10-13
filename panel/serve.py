@@ -82,7 +82,10 @@ def _log(sid: str, msg: str) -> None:
 def environment() -> dict:
     """What this machine can do right now — shown on the start page."""
     root = os.geteuid() == 0
-    admin = root or subprocess.run(["sudo", "-n", "true"], capture_output=True).returncode == 0
+    # sudo works without a password right now (unlocked in the panel's terminal).
+    # Only the network scan uses it; the host scan runs as this user unless root.
+    admin = root or subprocess.run(["sudo", "-n", "true"], stdin=subprocess.DEVNULL,
+                                   capture_output=True).returncode == 0
     clouds = {name: bool(shutil.which(cmd)) for name, cmd in
               (("aws", "aws"), ("azure", "az"), ("gcp", "gcloud"), ("k8s", "kubectl"))}
     return {"admin": admin, "root": root, "clouds": clouds,
@@ -212,7 +215,7 @@ def run_shell_scan(sid: str, opts: dict) -> None:
         return
 
     args = ["bash", "discover.sh", "--yes", "--no-install"]
-    env = dict(os.environ, ND_PROGRESS="1")
+    env = dict(os.environ, ND_PROGRESS="1", ND_NONINTERACTIVE="1")
     if scope == "cloud":
         args.append("--cloud-only")
         prov = opts.get("provider", "all")
@@ -229,7 +232,10 @@ def run_shell_scan(sid: str, opts: dict) -> None:
         proc = subprocess.Popen(
             args, cwd=str(ND_DIR), env=env, text=True, bufsize=1,
             stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-            start_new_session=True,  # no controlling terminal → prompts can't block
+            # Own process group (so Stop can kill nmap & co.) but the same session:
+            # sudo's per-terminal ticket from the panel's terminal still works.
+            # ND_NONINTERACTIVE stops discover.sh from ever prompting there.
+            process_group=0,
         )
     except Exception as e:  # noqa: BLE001
         with LOCK:

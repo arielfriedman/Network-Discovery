@@ -147,12 +147,18 @@ init_sudo() {
   if ! have sudo; then warn "sudo not found; root-only scans will be skipped"; SUDO="__NOSUDO__"; return 1; fi
   if sudo -n true 2>/dev/null; then SUDO="sudo"; return 0; fi
   info "Some scans need root (raw packets, OS fingerprinting)."
+  # started from the dashboard: never ask for a password, nobody can type it
+  if [[ "${ND_NONINTERACTIVE:-0}" == 1 ]]; then
+    warn "sudo not authorised; root-only scans will be skipped"
+    SUDO="__NOSUDO__"; return 1
+  fi
   if sudo -v; then SUDO="sudo"; ok "sudo authorised for this run"; return 0; fi
   warn "sudo not authorised; root-only scans will be skipped"
   SUDO="__NOSUDO__"; return 1
 }
 can_root() { [[ "$SUDO" != "__NOSUDO__" ]]; }
-as_root() { if [[ -n "$SUDO" && "$SUDO" != "__NOSUDO__" ]]; then sudo "$@"; else "$@"; fi; }
+# -n: if the sudo ticket ran out mid-scan, fail this one tool instead of hanging on a prompt
+as_root() { if [[ -n "$SUDO" && "$SUDO" != "__NOSUDO__" ]]; then sudo -n "$@"; else "$@"; fi; }
 
 # keep the sudo timestamp alive during long scans
 sudo_keepalive_start() {

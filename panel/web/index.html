@@ -75,14 +75,19 @@ document.addEventListener("DOMContentLoaded",function(){
   function renderReady(){
     const box=$("ready"); let lines=[], ok=true;
     if(!ENV){ box.innerHTML='<span class="muted">Checking this machine…</span>'; return; }
-    const admin=ENV.admin
-      ? '<span class="ok">✓</span> Admin rights available.'
-      : '<span class="warn">!</span> No admin rights. Scans run, but checks that need root see less. To include them, stop the panel and start it with <code>sudo python3 serve.py</code>.';
-    if(scope==="host"){ lines.push('<span class="ok">✓</span> Ready.'); lines.push(admin); }
+    const unlock='To include them, stop the panel, run <code>sudo -v</code> in its terminal, then <code>./start.sh</code> again within 15 minutes.';
+    if(scope==="host"){
+      lines.push('<span class="ok">✓</span> Ready.');
+      lines.push(ENV.root
+        ? '<span class="ok">✓</span> Running as root: every check can read what it needs.'
+        : '<span class="warn">!</span> Runs as your user, not root: a few checks (password hashes, some logs and configs) see less. For full results start the panel with <code>sudo ./start.sh</code>.');
+    }
     if(scope==="network"){
       if(!ENV.nd_tool){ ok=false; lines.push('<span class="bad">✗</span> network-discovery tool not found in <code>discovery/</code> next to the panel.'); }
       else lines.push('<span class="ok">✓</span> network-discovery tool found.');
-      lines.push(ENV.admin?admin:'<span class="warn">!</span> No admin rights: the ARP sweep and OS detection will be skipped. Device and port discovery still run.');
+      lines.push(ENV.admin
+        ? '<span class="ok">✓</span> Admin rights available: ARP sweep and OS detection included.'
+        : '<span class="warn">!</span> No admin rights: the ARP sweep and OS detection will be skipped. Device and port discovery still run. '+unlock);
     }
     if(scope==="cloud"){
       const have=Object.keys(ENV.clouds).filter(k=>ENV.clouds[k]);
