@@ -147,3 +147,29 @@ details.f pre{white-space:pre-wrap;font:12.5px/1.5 ui-monospace,Menlo,Consolas,m
 .crow .chk input{min-width:0;width:16px;height:16px;padding:0}
 .btn.danger{background:var(--critical);border-color:var(--critical);color:#fff}
 .btn.danger-text{color:var(--critical)}
+
+/* scan page: credential cards */
+.credbox{display:flex;flex-direction:column;gap:10px;width:100%}
+.credwrap{width:100%}
+.cards{display:flex;flex-direction:column;gap:10px}
+.ccard{border:1px solid var(--border);border-radius:10px;padding:12px 14px;background:var(--plane);display:flex;flex-direction:column;gap:9px}
+.ccard-h{display:flex;align-items:center;gap:10px}
+.ccard-h .cname{flex:1;min-width:0}
+.ccard .x{background:none;border:0;color:var(--text-muted);font-size:18px;cursor:pointer}
+.cfields{display:flex;flex-wrap:wrap;gap:10px}
+.field .cf,.cf{display:flex;flex-direction:column;gap:3px;font-size:12px;color:var(--text-muted);text-transform:none;letter-spacing:normal}
+.cf.wide{width:100%}
+.cf input,.cf select{min-width:0;width:220px;max-width:100%}
+.cf.wide input{width:100%;box-sizing:border-box}
+.cf textarea{width:100%;box-sizing:border-box;background:var(--plane);color:var(--text-primary);border:1px solid var(--border);
+  border-radius:8px;padding:8px 10px;font:12px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace}
+.cfields .cf.wide{flex-basis:100%}
+.chint{font-size:12.5px}
+.cadd{display:flex;gap:8px;align-items:center}
+.cadd select{min-width:0}
+.csaved{display:flex;flex-direction:column;gap:5px;font-size:13px}
+.csaved .chk,.ccard .chk{display:flex;align-items:center;gap:7px;font-size:13px;color:var(--text-primary);text-transform:none;letter-spacing:normal}
+.csaved input[type=checkbox],.ccard input[type=checkbox]{min-width:0;width:16px;height:16px;padding:0}
+.linkbtn{background:none;border:0;color:var(--critical);cursor:pointer;font-size:12px;text-decoration:underline}
+@media (max-width:560px){ .cf input,.cf select{width:100%} }
+.field label.filebtn{text-transform:none;letter-spacing:normal;font-size:13px;color:var(--text-primary);width:max-content}

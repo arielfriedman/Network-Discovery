@@ -49,13 +49,21 @@ register_secret() {
 
 # scrub - filter stdin, replacing any registered secret with a placeholder.
 # Always pipe tool output through this before it reaches a report file.
+# The secrets go to sed in a script file in $SECURE_TMP (tmpfs, 0700), not as
+# -e arguments: argv is readable by every local user via /proc.
 scrub() {
   if (( ${#_SECRET_VALUES[@]} == 0 )); then cat; return; fi
-  local args=() v
-  for v in "${_SECRET_VALUES[@]}"; do
-    args+=(-e "s|$(printf '%s' "$v" | sed 's|[][\\/.*^$]|\\&|g')|***REDACTED***|g")
-  done
-  sed "${args[@]}"
+  [[ -n "${SECURE_TMP:-}" && -d "$SECURE_TMP" ]] || make_secure_tmp
+  local f="$SECURE_TMP/scrub.$BASHPID.sed" v
+  (
+    umask 077
+    for v in "${_SECRET_VALUES[@]}"; do
+      [[ -n "$v" ]] || continue
+      printf 's|%s|***REDACTED***|g\n' "$(printf '%s' "$v" | sed 's/[][\\/.*^$|&]/\\&/g')"
+    done >"$f"
+  )
+  sed -f "$f"
+  rm -f -- "$f"
 }
 
 wipe_secrets() {
@@ -82,9 +90,12 @@ cleanup() {
 
 # ---------- prompts ----------
 # All prompts read from /dev/tty so they still work when stdout is redirected.
+# Started from the dashboard (ND_NONINTERACTIVE=1) nobody can answer: prompts
+# take their default / come back empty instead of waiting on a terminal.
 ask_yes_no() {  # ask_yes_no "question" [default y|n]
   local q="$1" def="${2:-n}" ans hint
   if [[ "${ASSUME_YES:-0}" == 1 ]]; then return 0; fi
+  if [[ "${ND_NONINTERACTIVE:-0}" == 1 ]]; then [[ "$def" == y ]]; return; fi
   [[ "$def" == y ]] && hint="[Y/n]" || hint="[y/N]"
   while true; do
     printf '%s%s%s %s ' "$C_BOLD" "$q" "$C_RESET" "$hint" >/dev/tty
@@ -96,6 +107,7 @@ ask_yes_no() {  # ask_yes_no "question" [default y|n]
 
 ask_value() {  # ask_value VARNAME "prompt" [default]
   local __var="$1" q="$2" def="${3:-}" ans
+  if [[ "${ND_NONINTERACTIVE:-0}" == 1 ]]; then printf -v "$__var" '%s' "$def"; return 0; fi
   if [[ -n "$def" ]]; then
     printf '%s%s%s [%s]: ' "$C_BOLD" "$q" "$C_RESET" "$def" >/dev/tty
   else
@@ -107,6 +119,7 @@ ask_value() {  # ask_value VARNAME "prompt" [default]
 
 ask_secret() {  # ask_secret VARNAME "prompt" - no echo, registered for scrubbing
   local __var="$1" q="$2" ans
+  if [[ "${ND_NONINTERACTIVE:-0}" == 1 ]]; then printf -v "$__var" '%s' ""; return 0; fi
   printf '%s%s%s: ' "$C_BOLD" "$q" "$C_RESET" >/dev/tty
   read -rs ans </dev/tty || ans=""
   printf '\n' >/dev/tty

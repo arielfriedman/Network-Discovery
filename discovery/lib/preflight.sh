@@ -7,6 +7,7 @@ declare -A PKG_CMD=(
   [arp-scan]=arp-scan
   [nbtscan]=nbtscan
   [snmp]=snmpwalk
+  [sshpass]=sshpass
   [lldpd]=lldpctl
   [traceroute]=traceroute
   [mtr-tiny]=mtr

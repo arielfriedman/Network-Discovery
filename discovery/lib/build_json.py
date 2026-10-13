@@ -191,6 +191,19 @@ if targets:
                                 + ", ".join(t["value"] for t in missing[:5])
                                 + (" ..." if len(missing) > 5 else "")})
 
+# ---------------------------------------------------------------- logins
+# one row per login attempt (scan_auth.sh / scan_cloud.sh); never secrets
+credential_use = []
+for line in lines(env("CREDUSE")):
+    p = (line.split("\t") + [""] * 5)[:5]
+    credential_use.append(dict(zip(("type", "name", "host", "result", "detail"), p)))
+failed = [c for c in credential_use if c["result"] == "auth_failed"]
+if failed:
+    notable.append({"level": "warn",
+                    "text": f"{len(failed)} login(s) rejected: "
+                            + ", ".join(f"{c['name']} on {c['host']}" for c in failed[:4])
+                            + (" ..." if len(failed) > 4 else "")})
+
 host_list = sorted(hosts.values(),
                    key=lambda h: [int(x) for x in h["ip"].split(".")] if re.match(r"^\d+\.\d+\.\d+\.\d+$", h["ip"]) else [0, 0, 0, 0])
 
@@ -220,5 +233,6 @@ out = {
     "cloud": cloud,
     "notable": notable,
     "targets": targets,
+    "credential_use": credential_use,
 }
 print(json.dumps(out, indent=2))

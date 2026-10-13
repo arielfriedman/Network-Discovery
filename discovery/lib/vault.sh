@@ -67,6 +67,18 @@ vault_unlock() {
   _vault_require_gpg
 
   local tries=0 plain
+  # passphrase already supplied (dashboard): one attempt, no prompt
+  if [[ -n "$VAULT_PASS" ]]; then
+    if plain="$(_vault_gpg_decrypt)"; then
+      _vault_parse "$plain"; plain=""; VAULT_LOADED=1
+      ok "vault unlocked (${#VAULT[@]} entries)"
+      return 0
+    fi
+    VAULT_PASS=""
+    warn "vault passphrase was wrong"
+    (( optional )) && return 1
+  fi
+  [[ "${ND_NONINTERACTIVE:-0}" == 1 ]] && { (( optional )) && return 1; die "vault locked and no passphrase given"; }
   while (( tries < 3 )); do
     ask_secret VAULT_PASS "Vault passphrase"
     if plain="$(_vault_gpg_decrypt)"; then
@@ -156,4 +168,25 @@ vault_init_passphrase() {
   fi
   VAULT_PASS="$p1"; register_secret VAULT_PASS
   p1=""; p2=""
+}
+
+# vault_store_entries < "KEY=value" lines
+# Non-interactive save used by the dashboard: VAULT_PASS must already be set.
+# Creates the vault if there is none; otherwise unlocks it and merges.
+vault_store_entries() {
+  local line k v n=0
+  [[ -n "$VAULT_PASS" ]] || { warn "no vault passphrase given - credentials not saved"; return 1; }
+  _vault_require_gpg
+  if vault_exists && (( ! VAULT_LOADED )); then
+    vault_unlock --optional || { warn "could not unlock the vault - credentials not saved"; return 1; }
+  fi
+  while IFS= read -r line; do
+    k="${line%%=*}"; v="${line#*=}"
+    [[ "$k" =~ ^CRED_[A-Za-z0-9_-]+$ ]] || continue
+    VAULT["$k"]="$v"; n=$((n+1))
+    [[ "${ND_PROGRESS:-0}" == 1 ]] && printf '@@vault-saved %s\n' "$k"
+  done
+  (( n )) || return 0
+  _vault_serialise | _vault_gpg_encrypt && ok "$n credential(s) saved to the vault" \
+    || { err "could not write vault"; return 1; }
 }

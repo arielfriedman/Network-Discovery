@@ -157,6 +157,32 @@ def log(action: str, target: str | None = None, details: dict | None = None,
     _run(fn)
 
 
+def save_credential(vault_key: str, name: str, ctype: str, hosts: list[str]) -> None:
+    """Metadata for a card saved in the vault (never the secret)."""
+    def fn(cur):
+        cur.execute("""INSERT INTO credentials (vault_key, name, type, hosts, created_by)
+                       VALUES (%s, %s, %s, %s, %s)
+                       ON CONFLICT (vault_key) DO UPDATE
+                       SET name = EXCLUDED.name, type = EXCLUDED.type, hosts = EXCLUDED.hosts""",
+                    (vault_key, name, ctype, hosts, _local_user(cur)))
+    _run(fn)
+
+
+def list_credentials() -> list[dict]:
+    def fn(cur):
+        cur.execute("""SELECT vault_key, name, type, hosts, created_at, last_used, last_result
+                       FROM credentials ORDER BY type, name""")
+        return [_jsonable(r) for r in cur.fetchall()]
+    return _run(fn, [])
+
+
+def delete_credential(vault_key: str) -> bool:
+    def fn(cur):
+        cur.execute("DELETE FROM credentials WHERE vault_key = %s", (vault_key,))
+        return cur.rowcount > 0
+    return bool(_run(fn, False))
+
+
 def mark_interrupted() -> int:
     """At panel start nothing can be running yet: scans still marked
     'running' belong to a panel that stopped mid-scan."""
@@ -224,7 +250,7 @@ def _upsert_scan(cur, ref, kind, **cols) -> int:
         sets = ", ".join(f"{k} = %s" for k in cols)
         cur.execute(f"UPDATE scans SET {sets} WHERE id = %s", (*cols.values(), scan_id))
     # a re-import replaces the old rows instead of doubling them
-    for table in ("scan_modules", "findings", "hosts", "scan_targets"):
+    for table in ("scan_modules", "findings", "hosts", "scan_targets", "scan_credential_use"):
         cur.execute(f"DELETE FROM {table} WHERE scan_id = %s", (scan_id,))
     return scan_id
 
@@ -316,6 +342,21 @@ def save_network_scan(data: dict, kind: str = "network", status: str = "complete
             psycopg2.extras.execute_values(cur, """INSERT INTO scan_targets
                 (scan_id, kind, value, source, resolved_ip, status, detail) VALUES %s""", trows,
                 template="(%s, %s, %s, %s, %s::inet[], %s, %s)")
+        crows = []
+        for c in data.get("credential_use", []):
+            if c.get("result") in ("ok", "auth_failed", "unreachable", "error"):
+                crows.append((sid, str(c.get("type", ""))[:20], str(c.get("name", ""))[:60],
+                              str(c.get("host", ""))[:100], c["result"], (c.get("detail") or None)))
+        if crows:
+            psycopg2.extras.execute_values(cur, """INSERT INTO scan_credential_use
+                (scan_id, cred_type, cred_name, host, result, detail) VALUES %s""", crows)
+            # saved cards: remember when they were last used and how it went
+            cur.execute("""UPDATE credentials c SET last_used = now(),
+                               last_result = CASE WHEN bool_or THEN 'ok' ELSE 'failed' END
+                           FROM (SELECT cred_name, cred_type, bool_or(result = 'ok')
+                                 FROM scan_credential_use WHERE scan_id = %s
+                                 GROUP BY cred_name, cred_type) u
+                           WHERE c.name = u.cred_name AND c.type = u.cred_type""", (sid,))
         for h in data.get("hosts", []):
             ip = h.get("ip")
             if not ip or not re.match(r"^[0-9a-fA-F:.]+$", ip):
@@ -378,6 +419,9 @@ def get_scan(ref: str) -> dict | None:
         cur.execute("""SELECT kind, value, source, (SELECT string_agg(host(x), ',') FROM unnest(resolved_ip) x) AS ip, status, detail
                        FROM scan_targets WHERE scan_id = %s ORDER BY id""", (sid,))
         targets = cur.fetchall()
+        cur.execute("""SELECT cred_type, cred_name, host, result, detail FROM scan_credential_use
+                       WHERE scan_id = %s ORDER BY id""", (sid,))
+        logins = cur.fetchall()
         # compare with the previous finished scan of the same kind and target
         cur.execute("""SELECT id, scan_ref, started_at FROM scans
                        WHERE kind = %s AND target IS NOT DISTINCT FROM %s AND started_at < %s
@@ -398,7 +442,7 @@ def get_scan(ref: str) -> dict | None:
             for f in findings:
                 f["is_new"] = f["fingerprint"] not in before
         scan.pop("id", None)
-        return _jsonable({"scan": scan, "findings": findings, "hosts": hosts, "targets": targets, "diff": diff})
+        return _jsonable({"scan": scan, "findings": findings, "hosts": hosts, "targets": targets, "logins": logins, "diff": diff})
     return _run(fn)
 
 

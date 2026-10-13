@@ -32,6 +32,91 @@ Entry template:
 
 ---
 
+## 2026-10-13 - Scan builder step 2: credentials
+**Change:**
+- Scan page: credential cards - network scan (checklist item *Log in with
+  credentials*): SSH (password / pasted key / key file, port) and SNMP v2c /
+  v3 (port), each for a host list or any host; cloud scan: AWS, Azure, GCP,
+  Kubernetes. *Remember in vault* per card, saved cards listed by name with
+  *use* / *forget*, vault passphrase field. The page wipes secrets after the
+  scan starts. `panel/web/creds.js`.
+- Transport: panel -> `discover.sh` over an inherited pipe (`ND_CREDS_FD`,
+  `pass_fds`), written from a thread; `creds.py ingest` stores
+  `$SECURE_TMP/creds.json` (tmpfs, 0600). `creds.py` holds the validation
+  rules and the panel imports them (same pattern as `targets_util.py`).
+- `scan_auth.sh`: `auth_ssh_cards` / `auth_snmp_cards` pick the first card
+  whose hosts match, record every attempt (`work/cred-use.tsv` ->
+  `findings.json` `credential_use` -> table `scan_credential_use`).
+- `scan_cloud.sh`: cards for AWS / Azure / GCP / Kubernetes with isolated
+  logins (`AZURE_CONFIG_DIR`, `CLOUDSDK_CONFIG`, `KUBECONFIG`, empty AWS
+  config files) inside `$SECURE_TMP`; Azure secret via `--password @file`.
+- Vault: `vault_store_entries` (non-interactive save, `@@vault-saved` lines
+  for the panel), `vault_unlock` uses a supplied passphrase once,
+  `vault.sh` accepts the passphrase on `ND_VAULT_PASS_FD`.
+- Migration `007_credentials.sql` (`credentials` metadata, never secrets;
+  `scan_credential_use`). History detail shows *Listed targets* (step 1) and
+  *Logins*. `GET /api/credentials`, `POST /api/credentials/forget`.
+- `sshpass` added to the tool list (installer installs it).
+- Cloud provider research saved as `docs/CLOUD_PROVIDERS.md` (for the next
+  task: more providers).
+**Why:** user asked for an option to enter their own passwords per system;
+design agreed: per scan, optional "remember in vault", DB metadata only.
+**Issues / errors:**
+- *`scrub()` leaked every secret into `sed`'s argv* (pre-existing): it built
+  `sed -e 's|<secret>|...|'` arguments, readable by any local user in
+  `/proc/*/cmdline` while sed ran. Now a sed script file in `$SECURE_TMP`
+  (`sed -f`, deleted after); `|` and `&` in secrets are now escaped too.
+- *Prompts could hang dashboard scans* (pre-existing, made worse by keeping
+  the panel's terminal for sudo): with `--auth`, `vault_get` -> `ask_secret`
+  reads `/dev/tty`, which from a background process group stops the scan
+  (SIGTTIN). `ask_*` now return the default / empty when
+  `ND_NONINTERACTIVE=1`, and dashboard scans never enter the old prompt flow.
+- *Azure secret on the command line* (pre-existing): `az login -p "$secret"`.
+  With a card it is now `--password @file`. The old prompt flow (CLI use
+  without a card) still passes it as an argument - left for the CLI path,
+  noted here.
+- *`az login` / `gcloud auth` persisted logins in the user's profile*
+  (pre-existing) -> isolated config dirs when a card is used.
+- SSH / SNMP were hard-wired to ports 22 / 161; there is no sshd / snmpd on
+  this machine and unprivileged test servers can't bind low ports -> added
+  an optional port per card (also useful for real devices).
+- Fields that depend on a select (SSH password, SNMP v3 privacy fields)
+  didn't show until the select was touched: visibility used the stored value
+  only -> merge with defaults. Found in the screenshot.
+- `snmpwalk` printed "Cannot find module (SNMPv2-MIB)" noise into reports ->
+  `-m ""` (numeric OIDs, no MIB loading).
+- A wrong passphrase on *forget* surfaced as "vault locked and no passphrase
+  given" -> "wrong vault passphrase".
+**Verified:**
+- Test servers from Ubuntu packages, unprivileged in the scratch dir:
+  `sshd` on 127.0.0.1:2222 (key + password auth), `snmpd` on 127.0.0.1:1161
+  (v2c community + v3 user, SHA/AES); `sshpass` likewise.
+- `discover.sh` with cards on fd 3: SSH key login ok, SNMP v3 ok; wrong SSH
+  password -> `auth_failed`, wrong v3 password -> `auth_failed`, wrong v2c
+  community -> `unreachable`; rejected logins appear in *Worth a look*.
+- While scanning, `ps -eo args` sampled every 0.5 s: no secret in any
+  command line. No secret in the run folder; `$SECURE_TMP` removed at exit.
+  `scrub()` tested with `pa$$|w.rd&[x]*^`, `a/b\c`.
+- Vault (separate test vault file, not the real one): save -> GPG AES-256
+  file 0600; reuse with passphrase only -> login ok; wrong passphrase ->
+  warning, scan continues.
+- Through the panel API: cloud card in a network scan 400; save without
+  passphrase 400; full scan -> complete, both logins `ok`, card saved
+  (`credentials` row, `last_result ok`), `pg_dump` of the database and the
+  status API contain no secret; forget with wrong passphrase 400, then
+  forget -> removed from vault and database.
+- Cloud cards with stand-in `aws` / `az` / `gcloud` / `kubectl` scripts that
+  log what they receive: correct env, `--password @file` with a 0600 file,
+  isolated config dirs, kubeconfig 0600, no secret in any argv, nothing
+  written to `~/.azure` or `~/.config/gcloud`; wrong keys -> `auth_failed`.
+- Screenshots: Scan page with SSH + SNMP v3 cards and the missing-field
+  list; History detail with listed targets and logins.
+**Not verified / follow-up:** real cloud CLIs (none installed here) - in
+particular that `az login --password @file` reads the file (Azure CLI's
+documented `@file` convention, not confirmed for this flag); SSH / SNMP
+against real network devices; SNMP v3 with SHA-256/512 or AES-256 (needs
+agent support).
+
 ## 2026-10-13 - Clear history
 **Change:** History page: *Clear history…* (all saved scans, or older than
 30 / 90 / 365 days, optionally with report files) and *Delete this scan* on

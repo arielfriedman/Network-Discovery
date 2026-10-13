@@ -1,11 +1,11 @@
 # Scan builder: checklist, targets, credentials, virtualization
 
-Status: step 1 done (2026-10-13). Each step is logged in `DEVLOG.md`.
+Status: steps 1 and 2 done (2026-10-13). Each step is logged in `DEVLOG.md`.
 
 | Step | What | Status |
 |---|---|---|
 | 1 | Checklist of scan parts + targets by IP / CIDR / MAC / hostname, typed or uploaded (`ip.txt`, `mac.txt`, `hostnames.txt`) | done |
-| 2 | Credentials per system type, typed per scan, optional "remember in vault" | planned |
+| 2 | Credentials per system type, typed per scan, optional "remember in vault" | done |
 | 3 | VM tagging by MAC prefix + read-only Proxmox inventory | planned |
 | 4 | vCenter / ESXi / Hyper-V / libvirt inventory | planned |
 
@@ -94,12 +94,91 @@ within 2 s (`ND_PARENT_PID` watcher) and stops the group too.
 - `scan_targets` - one row per input line: `kind`, `value`, `source`,
   `resolved_ip inet`, `status`.
 
-## Step 2 - credentials (planned)
+## Step 2 - credentials
 
-Secrets are typed per scan and passed to `discover.sh` through an inherited
-pipe (never argv, env or disk). "Remember in vault" writes them to the GPG
-vault. The database stores only metadata (`credentials`,
-`scan_credential_use`), never the secret.
+Status: done (2026-10-13). Code: `discovery/lib/creds.py` (rules, shared with
+the panel), `discovery/lib/creds.sh`, `scan_auth.sh` (`*_cards`),
+`scan_cloud.sh`, `panel/web/creds.js`, migration `007_credentials.sql`.
+
+### What the user sees
+
+- **Network scan:** checklist item *Log in with credentials*. Each credential
+  is a card: type, a name, which hosts it is for (IPs / ranges, blank = any
+  host that offers the service), and the fields:
+
+  | Type | Fields |
+  |---|---|
+  | SSH | user; password, or a pasted private key, or a key file path on this machine |
+  | SNMP v2c | community |
+  | SNMP v3 | user, security level, auth protocol + password, privacy protocol + password |
+
+  Several cards of the same type are allowed; for each host the first card
+  whose host list matches is used.
+- **Cloud scan:** one card per selected provider (AWS, Azure, GCP,
+  Kubernetes, and the providers added later). Leaving a card empty uses the
+  CLI's existing sign-in on this machine, as before.
+- **Vault:** *Remember in vault* (per card) + the vault passphrase stores
+  the card in the encrypted vault. Saved cards are listed by name (from the
+  database, never the secret) and can be ticked for a scan; the passphrase
+  unlocks them.
+
+### Where secrets go (and never go)
+
+```
+browser --HTTPS? no: 127.0.0.1 only, token-protected POST-->  serve.py (memory)
+serve.py --inherited pipe (fd), never argv/env/disk-->  discover.sh
+discover.sh -> creds.py ingest -> $SECURE_TMP/creds.json (tmpfs /dev/shm, 0600, deleted on exit)
+per tool:  SSH password  -> SSHPASS env of sshpass only
+           SSH key       -> 0600 file in $SECURE_TMP
+           SNMP          -> snmp.conf in $SECURE_TMP (SNMPCONFPATH), never argv
+           AWS           -> AWS_* env of the aws process
+           Azure secret  -> 0600 file read by `az ... -p @file`; AZURE_CONFIG_DIR in $SECURE_TMP
+           GCP key JSON  -> 0600 file; CLOUDSDK_CONFIG in $SECURE_TMP
+           kubeconfig    -> 0600 file; KUBECONFIG points at it
+```
+
+- Never in: the database, the activity log, `findings.json`, reports, the
+  scan status API, process arguments. Every secret is registered with
+  `scrub()` so tool output is redacted before it is written.
+- Logins made for a scan are isolated (`AZURE_CONFIG_DIR`, `CLOUDSDK_CONFIG`,
+  `KUBECONFIG` in `$SECURE_TMP`) so nothing stays signed in afterwards.
+- The vault stays the only place secrets are kept on disk (GPG AES-256).
+  A saved card is one vault entry `CRED_<slug>=<base64 JSON>`; the old flat
+  keys (`SSH_USER`, `SNMP_COMMUNITY`, ...) keep working for the CLI.
+
+### Behaviour worth knowing
+
+- SSH and SNMP cards have an optional port (default 22 / 161). Hosts to
+  try: those the port scan saw with the port open; without port-scan data
+  a quick TCP probe of port 22 (SSH) or every live host (SNMP, UDP can't be
+  probed without root); hosts named on a card are always tried.
+- SSH host keys seen by scans go to `discovery/config/known_hosts`
+  (git-ignored), not `~/.ssh/known_hosts`; first contact is trusted
+  (`accept-new`), a changed key is reported as an error, not accepted.
+- SSH passwords need `sshpass` (now in the installer's tool list); keys with
+  a passphrase are not supported (`BatchMode`).
+- SNMP v2c with a wrong community gets no answer at all, so it is reported
+  as `unreachable`, not `auth_failed`. SNMP v3 reports wrong passwords.
+- Cloud cards: leave the card out to use the CLI's own sign-in on this
+  machine, as before. With a card, AWS gets `AWS_*` env with empty
+  `AWS_CONFIG_FILE` / `AWS_SHARED_CREDENTIALS_FILE` (no `~/.aws` profiles
+  mixed in); Azure, GCP and Kubernetes log in inside `$SECURE_TMP`.
+- A wrong vault passphrase: warning, scan continues without the saved cards.
+
+### Panel API
+
+| Call | Purpose |
+|---|---|
+| `POST /api/scan/start` `{..., credentials: {sets: [...], vault: {passphrase, use: [CRED_x]}}}` | validated with `creds.py` rules; 400 with the reason |
+| `GET /api/credentials` | saved cards (metadata only) |
+| `POST /api/credentials/forget` `{vault_key, passphrase}` | remove from the vault (`vault.sh rm`, passphrase on a pipe) and the database |
+
+### Results
+
+Each login attempt is recorded (`work/cred-use.tsv` -> `findings.json`
+`credential_use` -> table `scan_credential_use`): credential name, type,
+host, result (`ok`, `auth_failed`, `unreachable`, `error`). Saved cards get
+a `credentials` row (name, type, hosts, vault key, last used, last result).
 
 ## Steps 3-4 - virtualization (planned)
 

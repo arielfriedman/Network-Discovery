@@ -3,7 +3,8 @@
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>SentinelScan</title>
 <link rel="stylesheet" href="/web/style.css">
-<script src="/web/common.js" defer></script></head>
+<script src="/web/common.js" defer></script>
+<script src="/web/creds.js" defer></script></head>
 <body><div class="wrap">
   <header><h1>Scan</h1>
     <div class="sub">Choose what to scan, then start. Everything runs locally on this machine.</div>
@@ -66,7 +67,9 @@ document.addEventListener("DOMContentLoaded",function(){
       [k, PROV[k]+(k!=="all"&&ENV&&!ENV.clouds[k]?" (not installed)":"")])]];
   }
   // ── network: targets + checklist ──────────────────────────────────────────
-  const NET={mode:"network", typed:"", files:[], parsed:null, opts:{names:true,ports:"off",vuln:false,wan:true,pn:false}, wanTouched:false};
+  const NET={mode:"network", typed:"", files:[], parsed:null, opts:{names:true,ports:"off",vuln:false,wan:true,pn:false,logins:false}, wanTouched:false};
+  const NET_CRED=["ssh","snmp"], CLOUD_CRED=["aws","azure","gcp","k8s"];
+  const credTypes=()=>scope==="network"?NET_CRED:scope==="cloud"?CLOUD_CRED:[];
   const KIND={ip:"IP",cidr:"range",mac:"MAC",host:"hostname"};
   function netEntries(){
     const e=NET.typed.split(/\r?\n/).map(line=>({line,source:"typed"}));
@@ -101,7 +104,9 @@ document.addEventListener("DOMContentLoaded",function(){
             <label class="chk"><input type="checkbox" data-o="vuln" ${o.vuln?"checked":""} ${o.ports==="off"?"disabled":""}> Vulnerability scripts (slow, noisy; needs ports)</label>
             <label class="chk"><input type="checkbox" data-o="wan" ${o.wan?"checked":""}> Gateway and internet path</label>
             <label class="chk" style="display:${t?"flex":"none"}"><input type="checkbox" data-o="pn" ${o.pn?"checked":""}> Scan listed hosts even if they don't answer ping</label>
+            <label class="chk"><input type="checkbox" data-o="logins" ${o.logins?"checked":""}> Log in with credentials (SSH, SNMP) to collect system details</label>
           </div></div>
+        <div id="credBox" class="credbox" style="display:${o.logins?"block":"none"}"></div>
       </div>`;
     $("tmode").querySelectorAll("button").forEach(b=>b.onclick=()=>{
       NET.mode=b.dataset.m;
@@ -124,6 +129,7 @@ document.addEventListener("DOMContentLoaded",function(){
       renderNetwork(); parseTargets();
     };
     $("tfiles").querySelectorAll("button").forEach(b=>b.onclick=()=>{ NET.files.splice(+b.dataset.i,1); renderNetwork(); parseTargets(); });
+    if(o.logins) Creds.mount($("credBox"), NET_CRED, renderReady); else Creds.unmount();
     renderTsum();
   }
   async function parseTargets(){
@@ -147,9 +153,14 @@ document.addEventListener("DOMContentLoaded",function(){
 
   function renderOpts(){
     if(scope==="network"){ renderNetwork(); renderReady(); return; }
+    Creds.unmount();
     $("opts").innerHTML=opts().map(([k,label,vals])=>
       `<div class="field"><label>${label}</label><select data-k="${k}">`+
       vals.map(([v,t])=>`<option value="${v}">${t}</option>`).join("")+`</select></div>`).join("");
+    if(scope==="cloud"){
+      $("opts").insertAdjacentHTML("beforeend",'<div class="field credwrap"><label>Credentials (optional)</label><div id="credBox" class="credbox"></div></div>');
+      Creds.mount($("credBox"), CLOUD_CRED, renderReady);
+    }
     renderReady();
   }
   function renderReady(){
@@ -179,6 +190,13 @@ document.addEventListener("DOMContentLoaded",function(){
       if(!have.length){ lines.push('<span class="bad">✗</span> No cloud tool is installed (aws, az, gcloud, kubectl), so a cloud scan will find nothing. Install one and sign in first.'); }
       else lines.push('<span class="ok">✓</span> Installed: '+have.map(k=>PROV[k]).join(", ")+'. They must also be signed in.');
     }
+    const ct=credTypes();
+    if(ct.length && (scope==="cloud" || NET.opts.logins)){
+      const pr=Creds.problems(ct);
+      if(pr.length){ ok=false; pr.forEach(x=>lines.push('<span class="bad">✗</span> Credentials: '+esc(x))); }
+      else if(Creds.count(ct)) lines.push('<span class="ok">✓</span> '+Creds.count(ct)+' credential(s) ready.');
+      else if(scope==="network") lines.push('<span class="warn">!</span> Logins are on but no credential is added: nothing to log in with.');
+    }
     box.innerHTML=lines.map(l=>`<div>${l}</div>`).join("");
     $("startBtn").disabled=!ok;
   }
@@ -193,10 +211,13 @@ document.addEventListener("DOMContentLoaded",function(){
   $("startBtn").onclick=async()=>{
     const o={scope};
     if(scope==="network"){ o.target_mode=NET.mode; o.options={...NET.opts}; if(NET.mode==="targets") o.targets=netEntries(); }
-    else $("opts").querySelectorAll("select").forEach(s=>o[s.dataset.k]=s.value);
+    else $("opts").querySelectorAll("select[data-k]").forEach(s=>o[s.dataset.k]=s.value);
+    const ct=credTypes();
+    if(ct.length && (scope==="cloud" || NET.opts.logins)){ const c=Creds.payload(ct); if(c) o.credentials=c; }
     $("startBtn").disabled=true;
     let j; try{ j=await api("/api/scan/start",o); }catch(e){ alert("Could not start the scan: "+e.message); $("startBtn").disabled=false; return; }
     curId=j.scan_id;
+    Creds.wipe();
     $("setup").style.display="none"; $("run").style.display="block";
     $("runTitle").textContent="Scanning";
     $("doneBar").style.display="none"; $("frame").style.display="none";

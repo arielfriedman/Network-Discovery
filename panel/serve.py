@@ -35,6 +35,7 @@ from scanner import ScanSession, ScanOrchestrator, MODULE_REGISTRY
 from reporters import generate_dashboard
 import db
 import targets as tg
+import creds as credmod        # discovery/lib/creds.py (path set up by targets)
 from devices import manager as devmgr
 from devices.base import DeviceError, PinMismatch, PinRequired
 
@@ -74,6 +75,47 @@ def _new_scan(scope: str, opts: dict) -> str:
             "started": time.strftime("%Y-%m-%d %H:%M:%S"),
         }
     return sid
+
+
+# Credentials for a scan wait here between the request and the runner thread.
+# They are never put in SCANS (whose contents feed the status API), the
+# database or the activity log.
+_CREDS: dict[str, dict] = {}
+
+
+def parse_credentials(body: dict, scope: str) -> dict | None:
+    """Validate the credential cards with the same rules discover.sh applies."""
+    c = body.get("credentials")
+    if not isinstance(c, dict) or scope not in ("network", "cloud"):
+        return None
+    sets = c.get("sets") if isinstance(c.get("sets"), list) else []
+    allowed = {"ssh", "snmp"} if scope == "network" else set(credmod.TYPES) - credmod.HOST_TYPES
+    for i, st in enumerate(sets, 1):
+        if not isinstance(st, dict) or st.get("type") not in allowed:
+            raise BadRequest(f"credential {i}: type not valid for a {scope} scan")
+        try:
+            credmod.validate(st, i)
+        except credmod.Bad as e:
+            raise BadRequest(str(e))
+    v = c.get("vault") if isinstance(c.get("vault"), dict) else {}
+    use = [str(x) for x in (v.get("use") or [])]
+    if (use or any(st.get("save") for st in sets)) and not v.get("passphrase"):
+        raise BadRequest("the vault passphrase is needed to use or remember saved credentials")
+    if not sets and not use:
+        return None
+    return {"sets": sets, "vault": {"passphrase": str(v.get("passphrase") or ""), "use": use}}
+
+
+def _send_secret(fd: int, data: bytes) -> None:
+    """Write to the child's credential pipe from a thread (the pipe buffer is
+    64 KB) and close it, so the child sees EOF."""
+    def run():
+        try:
+            with os.fdopen(fd, "wb") as fh:
+                fh.write(data)
+        except (BrokenPipeError, OSError):
+            pass
+    threading.Thread(target=run, daemon=True).start()
 
 
 def _log(sid: str, msg: str) -> None:
@@ -238,12 +280,26 @@ def run_shell_scan(sid: str, opts: dict) -> None:
             args.append("--no-passive")
         if not o.get("wan", True):
             args.append("--no-wan")
+        creds_doc = _CREDS.get(sid)
+        if o.get("logins") or (creds_doc and creds_doc["sets"]):
+            args.append("--auth")
         if opts.get("_targets"):
             tfile = REPORTS / f"{sid}-targets.txt"
             tg.write_file(tfile, opts["_targets"])
             args += ["--targets", str(tfile)]
             if o.get("pn"):
                 args.append("--pn")
+    creds_doc = _CREDS.pop(sid, None)
+    pass_fds, cred_w, saved_meta = (), None, {}
+    if creds_doc:
+        r, cred_w = os.pipe()
+        env["ND_CREDS_FD"] = str(r)
+        pass_fds = (r,)
+        saved_meta = {"CRED_" + credmod.slug(credmod.validate(st, i + 1)["name"]): st
+                      for i, st in enumerate(creds_doc["sets"]) if st.get("save")}
+        _log(sid, "Credentials: " + ", ".join(
+            f"{st.get('name') or st['type']} ({st['type']})" for st in creds_doc["sets"])
+            + (f"; {len(creds_doc['vault']['use'])} saved card(s) from the vault" if creds_doc["vault"]["use"] else ""))
     _log(sid, "$ " + " ".join(args))
     db.scan_started(sid, scope, None, None,
                     opts.get("scan_type") if scope == "network" else opts.get("provider", "all"),
@@ -257,11 +313,18 @@ def run_shell_scan(sid: str, opts: dict) -> None:
             # sudo's per-terminal ticket from the panel's terminal still works.
             # ND_NONINTERACTIVE stops discover.sh from ever prompting there.
             process_group=0,
+            pass_fds=pass_fds,
         )
     except Exception as e:  # noqa: BLE001
+        if cred_w is not None:
+            os.close(cred_w); os.close(pass_fds[0])
         with LOCK:
             SCANS[sid]["status"] = "error"; SCANS[sid]["current"] = f"Error: {e}"
         return
+    if cred_w is not None:
+        os.close(pass_fds[0])                       # the child has its own copy
+        _send_secret(cred_w, json.dumps(creds_doc).encode())
+        creds_doc = None
     with LOCK:
         SCANS[sid]["cancel"] = lambda: _kill_group(proc)
 
@@ -272,6 +335,14 @@ def run_shell_scan(sid: str, opts: dict) -> None:
             continue
         with LOCK:
             s = SCANS[sid]
+            if line.startswith("@@vault-saved "):
+                key = line.split(" ", 1)[1].strip()
+                st = saved_meta.get(key)
+                if st:
+                    db.save_credential(key, st.get("name") or key[5:], st["type"],
+                                       [str(h) for h in (st.get("hosts") or [])])
+                    _log(sid, f"Saved to the vault: {st.get('name') or key}")
+                continue
             if line.startswith("@@cmd "):
                 argv = line[6:]
                 s["cmd"] = argv; s["tool"] = _tool_name(argv); s["cmd_since"] = time.time()
@@ -361,6 +432,7 @@ def network_options(body: dict) -> dict:
     ports = o.get("ports", "top" if body.get("scan_type") == "full" else "off")
     targets_mode = body.get("target_mode") == "targets"
     return {"names": bool(o.get("names", True)),
+            "logins": bool(o.get("logins", False)),
             "ports": ports if ports in ("off", "top", "all") else "off",
             "vuln": bool(o.get("vuln", False)),
             "wan": bool(o.get("wan", not targets_mode)),
@@ -395,6 +467,8 @@ def _remove_report_files(deleted: list[dict]) -> int:
 
 def start_scan(scope: str, opts: dict, source_ip: str | None = None) -> str:
     opts = dict(opts); opts["scope"] = scope
+    creds_doc = parse_credentials(opts, scope)
+    opts.pop("credentials", None)                 # secrets never go further than this
     if scope == "network":
         opts["options"] = network_options(opts)
         opts["scan_type"] = "quick" if opts["options"]["ports"] == "off" else "full"
@@ -414,6 +488,11 @@ def start_scan(scope: str, opts: dict, source_ip: str | None = None) -> str:
             opts["target_spec"] = {"mode": "network"}
     opts.pop("targets", None)                     # the raw list: big, and already parsed
     sid = _new_scan(scope, opts)
+    if creds_doc:
+        _CREDS[sid] = creds_doc
+        opts["credentials"] = [{"type": st["type"], "name": st.get("name"), "hosts": st.get("hosts") or [],
+                                "save": bool(st.get("save"))} for st in creds_doc["sets"]] \
+            + [{"vault": k} for k in creds_doc["vault"]["use"]]   # names only, for the log
     db.log("scan.start", sid, {k: v for k, v in opts.items() if not k.startswith("_")}, source_ip)
     runner = SCOPE_RUNNERS.get(scope, run_host_scan)
     threading.Thread(target=runner, args=(sid, opts), daemon=True).start()
@@ -516,6 +595,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200 if got else 404, got or {"error": "not found"})
         if path == "/api/activity":
             return self._send(200, db.recent_activity(100))
+        if path == "/api/credentials":
+            return self._send(200, {"db": db.ready(), "credentials": db.list_credentials()})
         if path == "/api/env":
             return self._send(200, environment())
         if path.startswith("/api/scan/") and path.endswith("/status"):
@@ -587,6 +668,27 @@ class Handler(BaseHTTPRequestHandler):
                                             "older_than_days": days, "all": body.get("all") is True},
                    self.client_address[0])
             return self._send(200, {"deleted": len(deleted), "files_removed": files})
+        if path == "/api/credentials/forget":
+            body = self._body()
+            key, pw = str(body.get("vault_key") or ""), str(body.get("passphrase") or "")
+            if not re.match(r"^CRED_[A-Za-z0-9_-]{1,64}$", key) or not pw:
+                return self._send(400, {"error": "vault_key and passphrase are required"})
+            r, w = os.pipe()
+            try:
+                p = subprocess.Popen(["bash", "vault.sh", "rm", key], cwd=str(ND_DIR), pass_fds=(r,),
+                                     env=dict(os.environ, ND_VAULT_PASS_FD=str(r), NO_COLOR="1"),
+                                     stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+            finally:
+                os.close(r)
+            _send_secret(w, (pw + "\n").encode()); pw = ""
+            out, _ = p.communicate(timeout=60)
+            if p.returncode != 0 and "no such key" not in out:
+                msg = ("wrong vault passphrase" if "passphrase was wrong" in out
+                       else out.strip().splitlines()[-1] if out.strip() else "vault error")
+                return self._send(400, {"error": msg})
+            db.delete_credential(key)
+            db.log("credential.forget", key, None, self.client_address[0])
+            return self._send(200, {"forgotten": key})
         if path == "/api/targets/parse":
             body = self._body()
             r = tg.parse(body.get("targets") if isinstance(body.get("targets"), list) else [],

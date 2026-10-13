@@ -50,6 +50,18 @@
     <div id="diffBox"></div>
     <h2>Findings</h2>
     <div class="card" id="findings"></div>
+    <div id="targetsSec" style="display:none">
+      <h2>Listed targets</h2>
+      <div class="tbl-wrap"><table class="data">
+        <thead><tr><th>Kind</th><th>Entry</th><th>From</th><th>Status</th><th>IP</th><th>Detail</th></tr></thead>
+        <tbody id="targetRows"></tbody></table></div>
+    </div>
+    <div id="loginsSec" style="display:none">
+      <h2>Logins</h2>
+      <div class="tbl-wrap"><table class="data">
+        <thead><tr><th>Credential</th><th>Type</th><th>Host</th><th>Result</th><th>Detail</th></tr></thead>
+        <tbody id="loginRows"></tbody></table></div>
+    </div>
     <div id="hostsSec" style="display:none">
       <h2>Hosts</h2>
       <div class="tbl-wrap"><table class="data">
@@ -121,6 +133,15 @@ document.addEventListener("DOMContentLoaded", () => {
         ${f.remediation ? `<pre>Fix:\n${esc(f.remediation)}</pre>` : ""}</details>`).join("")
       : '<div class="empty">No findings.</div>';
 
+    const T = d.targets || [], L = d.logins || [];
+    const STATUS = { up: "up", assumed_up: "scanned anyway", no_response: "no response", unresolved: "name not found", not_seen: "not seen" };
+    $("targetsSec").style.display = T.length ? "block" : "none";
+    $("targetRows").innerHTML = T.map(t => `<tr><td>${esc(t.kind)}</td><td><code>${esc(t.value)}</code></td><td>${esc(t.source)}</td>
+      <td><span class="badge ${t.status === "up" ? "" : "new"}">${esc(STATUS[t.status] || t.status)}</span></td><td>${esc(t.ip || "")}</td><td class="muted">${esc(t.detail || "")}</td></tr>`).join("");
+    const RES = { ok: "logged in", auth_failed: "rejected", unreachable: "no answer", error: "error" };
+    $("loginsSec").style.display = L.length ? "block" : "none";
+    $("loginRows").innerHTML = L.map(c => `<tr><td>${esc(c.cred_name)}</td><td>${esc(c.cred_type)}</td><td>${esc(c.host)}</td>
+      <td><span class="badge ${c.result === "ok" ? "" : "new"}">${esc(RES[c.result] || c.result)}</span></td><td class="muted">${esc(c.detail || "")}</td></tr>`).join("");
     $("hostsSec").style.display = d.hosts.length ? "block" : "none";
     $("hostRows").innerHTML = d.hosts.map(h => `<tr><td>${esc(h.ip)}</td><td>${esc(h.hostname || "")}</td><td>${esc(h.vendor || "")}</td>
       <td><code>${esc(h.mac || "")}</code></td><td>${esc(h.os_guess || "")}</td>

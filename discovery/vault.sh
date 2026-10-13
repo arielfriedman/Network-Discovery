@@ -21,6 +21,15 @@ source "$BASE_DIR/lib/vault.sh"
 trap cleanup EXIT INT TERM
 make_secure_tmp
 
+# Called by the dashboard: the passphrase arrives on an inherited pipe
+# (ND_VAULT_PASS_FD), never argv or env, and nothing may prompt.
+if [[ "${ND_VAULT_PASS_FD:-}" =~ ^[0-9]+$ ]]; then
+  IFS= read -r VAULT_PASS <&"$ND_VAULT_PASS_FD" || true
+  eval "exec $ND_VAULT_PASS_FD<&-"
+  register_secret VAULT_PASS
+  export ND_NONINTERACTIVE=1
+fi
+
 usage() { sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
 
 KNOWN_KEYS=(

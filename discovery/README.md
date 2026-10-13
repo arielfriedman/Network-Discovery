@@ -78,6 +78,14 @@ work/              intermediate tables
 `reports/latest` always points at the newest run. Old runs beyond `KEEP_RUNS`
 (default 20) are pruned automatically.
 
+## Credentials from the dashboard
+
+The dashboard's credential cards (SSH, SNMP v2c/v3, AWS, Azure, GCP,
+Kubernetes) reach `discover.sh` through an inherited pipe (`ND_CREDS_FD`),
+are held in tmpfs for the run only, and are redacted from every report.
+Cards ticked *Remember in vault* are stored here as `CRED_<name>` entries.
+Details: [docs/SCAN_BUILDER.md](../docs/SCAN_BUILDER.md#step-2---credentials).
+
 ## The credential vault
 
 `vault.sh` keeps usernames, passwords and API keys in **one GPG AES-256

@@ -14,6 +14,7 @@ panel/backups/*
 
 # Local settings (database password, overrides)
 discovery/config/settings.local.conf
+discovery/config/known_hosts
 panel/settings.local.json
 .env
 

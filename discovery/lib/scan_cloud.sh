@@ -31,8 +31,24 @@ cloud_aws() {
   have aws || return 1
   mkdir -p "$RAW/cloud"
 
+  local id; id="$(cred_first aws 2>/dev/null)"
+  if [[ -n "$id" ]]; then
+    # a card from the dashboard: env of the aws processes only, and none of
+    # the profiles in ~/.aws mixed in
+    local name; name="$(cred_name "$id")"
+    export AWS_CONFIG_FILE="$SECURE_TMP/aws-config" AWS_SHARED_CREDENTIALS_FILE="$SECURE_TMP/aws-credentials"
+    AWS_ACCESS_KEY_ID="$(cred_get "$id" access_key_id)"
+    AWS_SECRET_ACCESS_KEY="$(cred_get "$id" secret_access_key)"
+    AWS_SESSION_TOKEN="$(cred_get "$id" session_token)"
+    AWS_DEFAULT_REGION="$(cred_get "$id" region)"; AWS_DEFAULT_REGION="${AWS_DEFAULT_REGION:-us-east-1}"
+    export AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_DEFAULT_REGION
+    [[ -n "$AWS_SESSION_TOKEN" ]] && export AWS_SESSION_TOKEN || unset AWS_SESSION_TOKEN
+    if ! aws sts get-caller-identity >/dev/null 2>&1; then
+      err "AWS credentials rejected ($name)"; cred_result aws "$name" aws auth_failed; return 1
+    fi
+    cred_result aws "$name" aws ok
   # Use existing credentials if they already work; otherwise offer the vault.
-  if ! aws sts get-caller-identity >/dev/null 2>&1; then
+  elif ! aws sts get-caller-identity >/dev/null 2>&1; then
     ask_yes_no "AWS CLI found but not authenticated. Supply AWS credentials?" n || return 1
     AWS_ACCESS_KEY_ID="$(vault_get AWS_ACCESS_KEY_ID 'AWS access key id')" || return 1
     AWS_SECRET_ACCESS_KEY="$(vault_get AWS_SECRET_ACCESS_KEY 'AWS secret access key')" || return 1
@@ -69,7 +85,23 @@ cloud_azure() {
   have az || return 1
   mkdir -p "$RAW/cloud"
 
-  if ! az account show >/dev/null 2>&1; then
+  local id; id="$(cred_first azure 2>/dev/null)"
+  if [[ -n "$id" ]]; then
+    # a card from the dashboard: sign in to a throw-away config dir, with the
+    # secret read from a 0600 file (Azure CLI @file syntax), never argv
+    local name; name="$(cred_name "$id")"
+    export AZURE_CONFIG_DIR="$SECURE_TMP/azure"; mkdir -p -m 700 "$AZURE_CONFIG_DIR"
+    cred_file "$id" client_secret "$SECURE_TMP/az-secret"
+    if ! az login --service-principal -u "$(cred_get "$id" client_id)" --password "@$SECURE_TMP/az-secret" \
+          --tenant "$(cred_get "$id" tenant_id)" --allow-no-subscriptions >/dev/null 2>&1; then
+      shred -u "$SECURE_TMP/az-secret" 2>/dev/null
+      err "Azure sign-in failed ($name)"; cred_result azure "$name" azure auth_failed; return 1
+    fi
+    shred -u "$SECURE_TMP/az-secret" 2>/dev/null
+    local sub; sub="$(cred_get "$id" subscription)"
+    [[ -n "$sub" ]] && az account set --subscription "$sub" >/dev/null 2>&1
+    cred_result azure "$name" azure ok
+  elif ! az account show >/dev/null 2>&1; then
     ask_yes_no "Azure CLI found but not signed in. Sign in now?" n || return 1
     local tenant client secret
     tenant="$(vault_get AZURE_TENANT_ID 'Azure tenant id')" || return 1
@@ -96,6 +128,21 @@ cloud_azure() {
 # ---------------------------------------------------------------- GCP
 cloud_gcp() {
   have gcloud || return 1
+  local id; id="$(cred_first gcp 2>/dev/null)"
+  if [[ -n "$id" ]]; then
+    # a card from the dashboard: service account key in a 0600 file, gcloud
+    # config in a throw-away dir
+    local name; name="$(cred_name "$id")"
+    export CLOUDSDK_CONFIG="$SECURE_TMP/gcloud"; mkdir -p -m 700 "$CLOUDSDK_CONFIG"
+    cred_file "$id" key_json "$SECURE_TMP/gcp-key.json"
+    if ! gcloud auth activate-service-account --key-file="$SECURE_TMP/gcp-key.json" >/dev/null 2>&1; then
+      err "GCP sign-in failed ($name)"; cred_result gcp "$name" gcp auth_failed; return 1
+    fi
+    local proj; proj="$(cred_get "$id" project)"
+    [[ -n "$proj" ]] || proj="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("project_id",""))' "$SECURE_TMP/gcp-key.json")"
+    [[ -n "$proj" ]] && gcloud config set project "$proj" >/dev/null 2>&1
+    cred_result gcp "$name" gcp ok
+  fi
   gcloud auth list --filter=status:ACTIVE --format="value(account)" 2>/dev/null | grep -q . || {
     info "gcloud present but no active account - skipping"; return 1; }
   mkdir -p "$RAW/cloud"
@@ -110,7 +157,19 @@ cloud_gcp() {
 # ---------------------------------------------------------------- Kubernetes
 cloud_k8s() {
   have kubectl || return 1
-  kubectl cluster-info >/dev/null 2>&1 || { info "kubectl present but no reachable cluster"; return 1; }
+  local id name=""; id="$(cred_first k8s 2>/dev/null)"
+  if [[ -n "$id" ]]; then
+    name="$(cred_name "$id")"
+    export KUBECONFIG="$SECURE_TMP/kubeconfig"
+    cred_file "$id" kubeconfig "$KUBECONFIG"
+    local ctx; ctx="$(cred_get "$id" context)"
+    [[ -n "$ctx" ]] && kubectl config use-context "$ctx" >/dev/null 2>&1
+  fi
+  if ! kubectl cluster-info >/dev/null 2>&1; then
+    [[ -n "$name" ]] && cred_result k8s "$name" k8s unreachable
+    info "kubectl present but no reachable cluster"; return 1
+  fi
+  [[ -n "$name" ]] && cred_result k8s "$name" k8s ok
   mkdir -p "$RAW/cloud"
   info "Kubernetes cluster reachable"
   run_tool "k8s nodes"     "$RAW/cloud/k8s-nodes.txt"    kubectl get nodes -o wide || true

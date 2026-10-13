@@ -34,6 +34,7 @@ source "$BASE_DIR/lib/scan_local.sh"
 source "$BASE_DIR/lib/scan_auth.sh"
 source "$BASE_DIR/lib/scan_cloud.sh"
 source "$BASE_DIR/lib/summarize.sh"
+source "$BASE_DIR/lib/creds.sh"
 source "$BASE_DIR/lib/dashboard.sh"
 
  usage() { sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
@@ -174,6 +175,8 @@ if [[ -n "${TARGETS_RAW:-}" ]]; then
   [[ -s "$TARGETS_FILE" ]] || die "no usable targets in $TARGETS_RAW"
   info "$(wc -l <"$TARGETS_FILE") target(s) accepted"
 fi
+
+load_creds
 
 init_sudo
 sudo_keepalive_start
