@@ -170,7 +170,16 @@ else
   warn "skipping the database (--no-db): the panel runs, without history"
 fi
 
-# ── 4. done ────────────────────────────────────────────────────────────────
+# ── 4. MAC vendor list (device identification) ────────────────────────────
+say "MAC vendor list"
+if (( DRY )); then echo "  [dry-run] would download the IEEE vendor registry"
+elif as_owner bash discovery/update-vendors.sh >/dev/null 2>&1; then
+  ok "current IEEE vendor registry saved (refresh any time: discovery/update-vendors.sh)"
+else
+  warn "could not download it (offline?); the copies from arp-scan/nmap are used instead"
+fi
+
+# ── 5. done ────────────────────────────────────────────────────────────────
 chmod +x "$APP/start.sh" "$APP/discovery/discover.sh" "$APP/discovery/vault.sh" 2>/dev/null || true
 say "Done"
 Q="$(printf '%q' "$APP")"   # quoted, in case the folder name has spaces

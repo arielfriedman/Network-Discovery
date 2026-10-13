@@ -12,7 +12,7 @@ build_json() {
   CLOUDDIR="$RAW/cloud" AWSOPEN="$WORK/aws-open-sgs.tsv" \
   META_CIDR="$TARGET_CIDR" META_IFACE="$IFACE" META_GW="$GATEWAY" \
   META_START="$RUN_START_ISO" META_ID="$RUN_ID" META_SELF="$SELF_IP" \
-  TARGETS="${TARGETS_FILE:+$WORK/targets.tsv}" CREDUSE="$WORK/cred-use.tsv" \
+  TARGETS="${TARGETS_FILE:+$WORK/targets.tsv}" CREDUSE="$WORK/cred-use.tsv" SSHDIR="$RAW/ssh" \
   python3 "$BASE_DIR/lib/build_json.py" >"$RUN_DIR/findings.json"
   ok "findings.json written"
 }
@@ -74,6 +74,9 @@ for h in d["hosts"]:
     print(f"\n  {h['ip']:<16} {h.get('hostname') or '-'}")
     if h.get("mac"):    print(f"    mac      {h['mac']}  {h.get('vendor') or ''}".rstrip())
     if h.get("os"):     print(f"    os       {h['os']}")
+    if h.get("device_type"):
+        print(f"    type     {h['device_type']}" + (f" - {h['device_model']}" if h.get("device_model") else "")
+              + f" ({h['device_confidence']}: {'; '.join(h['device_evidence'])[:120]})")
     if ports:           print(f"    ports    {ports}")
     for k in ("mdns", "netbios", "ssdp"):
         if h.get(k):    print(f"    {k:<8} {h[k][:100]}")

@@ -32,6 +32,50 @@ Entry template:
 
 ---
 
+## 2026-10-14 - Device types: Raspberry Pi; MAC addresses lost on big sweeps
+**Change:**
+- `discovery/lib/device_types.py`: vendor lookup from the IEEE registry
+  (`config/ieee-oui.csv` from the new `discovery/update-vendors.sh`, else
+  arp-scan's / nmap's copies) and rule-based device typing with evidence and
+  confidence. Raspberry Pi rules: MAC vendor (high), board model over SSH
+  (high, gives the model), OS fingerprint / banner (medium), host name (low).
+  Locally administered (random) MACs are flagged, not looked up.
+- SSH login collection also reads `/proc/device-tree/model`.
+- `findings.json`: `device_type`, `device_model`, `device_confidence`,
+  `device_evidence` per host, `device_types` counts, a "N Raspberry Pi(s)"
+  note. `summary.txt` prints the type. Dashboard: Type column and a
+  device-type filter. History: Type column. Migration `008_device_types.sql`.
+- `install.sh` fetches the vendor registry; preflight suggests a refresh
+  when it is missing or older than 90 days (never downloads during a scan).
+**Why:** user asked for an option to scan for and identify Raspberry Pis.
+**Issues / errors:**
+- *Vendors were missing on every scan without root* (pre-existing): only
+  arp-scan (root) supplied vendor names. -> local IEEE lookup for any host
+  with a MAC.
+- *Most MAC addresses were lost on large sweeps without root*
+  (pre-existing, timing-dependent): the /19 sweep left ~500 FAILED entries
+  in the kernel neighbour table; its garbage collector (gc_thresh2/3 =
+  512/1024 here) then evicts the real entries. One panel scan kept MACs for
+  3 of 14 hosts. -> `refresh_neighbours`: one ping per live host right
+  before reading the table (ARP happens even if the host drops ping).
+  Same scan afterwards: 12 of 14 hosts with MAC and vendor (the two without:
+  this PC itself, and one host that didn't answer).
+- The vendor files shipped with the OS (April 2024) lack newer Raspberry Pi
+  prefixes; the two Pis on the home network (88:A2:9E) were unidentified.
+  Confirmed in the official IEEE registry: 88:A2:9E and 2C:CF:67 =
+  "Raspberry Pi (Trading) Ltd" -> `update-vendors.sh` instead of a hard-coded
+  list.
+- Rules tightened before use: "rpi" in banners would match unrelated text;
+  "pi-hole" runs on any Linux box -> removed.
+**Verified:** rule tests (vendor, model, name, OS -> right type and
+confidence; `pi-hole`, `api-server`/`spiderman`, `rpcbind`, Synology -> no
+type); vendor lookup for the five Pi prefixes in the OS data and the two new
+ones from the IEEE file; full panel scan of 172.16.0.0/19 without root ->
+both Pis (.37, .38) identified "high", saved in Postgres with evidence,
+note in the report; dashboard screenshot with Type column and filter.
+**Not verified:** the SSH board-model path against a real Pi (needs a login
+card for one; tested only that a non-Pi gives no model).
+
 ## 2026-10-13 - Nightly database backups
 **Change:** `panel/db_backup.py`: `run` (pg_dump custom format to
 `panel/backups/db/sentinel-YYYYmmdd-HHMMSS.dump`, 0600, folder 0700, written

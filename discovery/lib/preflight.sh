@@ -44,6 +44,14 @@ missing_packages() {
 preflight() {
   section "Stage 0 - preflight"
 
+  # MAC vendor data (device identification): suggest a refresh, never fetch during a scan
+  local oui="$BASE_DIR/config/ieee-oui.csv"
+  if [[ ! -f "$oui" ]]; then
+    info "using the MAC vendor list shipped with arp-scan/nmap; for newer devices run ./update-vendors.sh"
+  elif [[ -n "$(find "$oui" -mtime +90 2>/dev/null)" ]]; then
+    info "MAC vendor list is over 90 days old; refresh with ./update-vendors.sh"
+  fi
+
   local -a missing
   mapfile -t missing < <(missing_packages)
 

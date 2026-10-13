@@ -78,6 +78,25 @@ work/              intermediate tables
 `reports/latest` always points at the newest run. Old runs beyond `KEEP_RUNS`
 (default 20) are pruned automatically.
 
+## Device types (Raspberry Pi, ...)
+
+Every network scan labels hosts it can identify, with the evidence and a
+confidence (`discovery/lib/device_types.py`):
+
+| Evidence | Confidence |
+|---|---|
+| MAC address registered to the maker (IEEE registry) | high |
+| board model read over SSH (`/proc/device-tree/model`), when a login card works | high, and gives the exact model |
+| OS fingerprint or service banner naming it | medium |
+| only the host / mDNS name (`raspberrypi`, `rpi4-...`) | low |
+
+Raspberry Pi is the first type; more are added as rules in the same file.
+MAC vendors come from `config/ieee-oui.csv`, fetched from the IEEE by
+`./update-vendors.sh` (the installer runs it; refresh every few months),
+falling back to the older copies shipped with arp-scan and nmap. Devices
+with a randomised (locally administered) MAC can't be identified this way.
+The dashboard and History can filter by type.
+
 ## Credentials from the dashboard
 
 The dashboard's credential cards (SSH, SNMP v2c/v3, AWS, Azure, GCP,

@@ -5,7 +5,7 @@ Reads file paths from the environment (set by summarize.sh) so it stays a
 pure data step with no argument plumbing. Missing inputs are normal - any
 stage can be skipped - so every read is tolerant.
 """
-import json, os, re, glob, collections
+import json, os, re, sys, glob, collections
 
 def lines(path):
     if not path or not os.path.exists(path):
@@ -80,6 +80,24 @@ for line in lines(env("SERVICES")):
 
 for h in hosts.values():
     h["ports"].sort(key=lambda x: int(re.match(r"\d+", x["port"]).group()) if re.match(r"\d+", x["port"]) else 0)
+
+# ---------------------------------------------------------------- vendor + device type
+# Without root there is no arp-scan, so hosts have a MAC (neighbour table) but
+# no vendor: look it up in the local IEEE data. Then classify device types.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import device_types  # noqa: E402
+for h in hosts.values():
+    if h["mac"] and not h["vendor"]:
+        if device_types.is_local_mac(h["mac"]):
+            h["mac_random"] = True          # randomised / software MAC: no vendor to find
+        else:
+            h["vendor"] = device_types.vendor_for_mac(h["mac"])
+    ssh_text = ""
+    if env("SSHDIR"):
+        f = os.path.join(env("SSHDIR"), h["ip"].replace(".", "_") + ".txt")
+        if os.path.exists(f):
+            ssh_text = open(f, encoding="utf-8", errors="replace").read()
+    device_types.classify(h, ssh_text)
 
 # ---------------------------------------------------------------- cloud
 cloud, cloud_total = {}, 0
@@ -213,6 +231,16 @@ if failed:
                             + ", ".join(f"{c['name']} on {c['host']}" for c in failed[:4])
                             + (" ..." if len(failed) > 4 else "")})
 
+# ---------------------------------------------------------------- device types
+type_counts = collections.Counter(h["device_type"] for h in hosts.values() if h.get("device_type"))
+pis = [h for h in hosts.values() if h.get("device_type") == "Raspberry Pi"]
+if pis:
+    notable.append({"level": "info",
+                    "text": f"{len(pis)} Raspberry Pi(s): " + ", ".join(
+                        h["ip"] + (f" ({h['device_model']})" if h.get("device_model") else "")
+                        + ("" if h["device_confidence"] == "high" else f" [{h['device_confidence']} confidence]")
+                        for h in pis[:6]) + (" ..." if len(pis) > 6 else "")})
+
 host_list = sorted(hosts.values(),
                    key=lambda h: [int(x) for x in h["ip"].split(".")] if re.match(r"^\d+\.\d+\.\d+\.\d+$", h["ip"]) else [0, 0, 0, 0])
 
@@ -239,6 +267,7 @@ out = {
     "top_ports": [{"label": k, "count": v} for k, v in port_counts.most_common(12)],
     "vendors": [{"label": k, "count": v} for k, v in vendor_counts.most_common(10)],
     "os_families": [{"label": k, "count": v} for k, v in os_counts.most_common(8)],
+    "device_types": [{"label": k, "count": v} for k, v in type_counts.most_common()],
     "cloud": cloud,
     "notable": notable,
     "targets": targets,

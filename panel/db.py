@@ -364,11 +364,16 @@ def save_network_scan(data: dict, kind: str = "network", status: str = "complete
                 continue
             mac = h.get("mac") if h.get("mac") and re.match(r"^([0-9a-fA-F]{2}[:-]){5}[0-9a-fA-F]{2}$", h["mac"]) else None
             extra = {k: h.get(k) for k in ("mdns", "netbios", "ssdp") if h.get(k)}
-            cur.execute("""INSERT INTO hosts (scan_id, ip, mac, hostname, vendor, os_guess, extra)
-                           VALUES (%s, %s, %s, %s, %s, %s, %s)
+            conf = h.get("device_confidence") if h.get("device_confidence") in ("high", "medium", "low") else None
+            cur.execute("""INSERT INTO hosts (scan_id, ip, mac, hostname, vendor, os_guess, extra,
+                                              device_type, device_model, device_confidence, device_evidence)
+                           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                            ON CONFLICT (scan_id, ip) DO NOTHING RETURNING id""",
                         (sid, ip, mac, h.get("hostname"), h.get("vendor"), h.get("os"),
-                         psycopg2.extras.Json(extra) if extra else None))
+                         psycopg2.extras.Json(extra) if extra else None,
+                         (h.get("device_type") or None) and str(h["device_type"])[:60],
+                         (h.get("device_model") or None) and str(h["device_model"])[:120],
+                         conf, [str(e)[:200] for e in (h.get("device_evidence") or [])][:10] or None))
             row = cur.fetchone()
             if not row:
                 continue
@@ -411,6 +416,7 @@ def get_scan(ref: str) -> dict | None:
                     (sid,))
         findings = cur.fetchall()
         cur.execute("""SELECT host(h.ip) AS ip, h.mac::text AS mac, h.hostname, h.vendor, h.os_guess,
+                              h.device_type, h.device_model, h.device_confidence, h.device_evidence,
                               coalesce(json_agg(json_build_object('port', s.port, 'protocol', s.protocol,
                                        'service', s.service, 'version', s.version) ORDER BY s.port)
                                        FILTER (WHERE s.port IS NOT NULL), '[]') AS services

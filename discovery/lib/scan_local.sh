@@ -17,6 +17,20 @@ sweep_opts() {
   fi
 }
 
+# A sweep of a large range leaves thousands of FAILED entries in the kernel
+# neighbour table, and its garbage collector (gc_thresh2/3, 512/1024 by
+# default) then evicts the real ones: without root most live hosts lost their
+# MAC address (and so their vendor). One ping per live host just before
+# reading the table makes their entries fresh again; it works even when the
+# host drops ping, because the ARP exchange happens first.
+refresh_neighbours() {  # refresh_neighbours GNMAP
+  [[ -s "$1" ]] && have ping || return 0
+  local n; n=$(awk '/Status: Up/{print $2}' "$1" | wc -l)
+  (( n > 0 )) || return 0
+  step "refreshing MAC addresses of $n live host(s)"
+  awk '/Status: Up/{print $2}' "$1" | xargs -r -P 32 -I{} ping -n -c 1 -W 1 {} >/dev/null 2>&1 || true
+}
+
 # Host discovery. Two independent sweeps, then merge - arp-scan sees things
 # that ignore ICMP, nmap sees things outside the broadcast domain.
 stage_discover() {
@@ -40,6 +54,7 @@ stage_discover() {
   fi
 
   # neighbour table picks up anything we have talked to recently
+  refresh_neighbours "$RAW/11-nmap-sweep.gnmap"
   run_tool "kernel neighbour table" "$RAW/12-neigh.txt" ip neigh show || true
 
   build_host_list
@@ -81,6 +96,7 @@ stage_discover_targets() {
       as_root nmap "${png[@]}" -oG "$RAW/11-nmap-sweep.gnmap" -iL "$WORK/sweep.list" || true
   fi
 
+  refresh_neighbours "$RAW/11-nmap-sweep.gnmap"
   run_tool "kernel neighbour table" "$RAW/12-neigh.txt" ip neigh show || true
   QUIET_HOSTS=1 build_host_list
 

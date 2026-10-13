@@ -196,8 +196,9 @@
   <section>
     <h2>Hosts</h2>
     <div class="toolbar">
-      <input id="q" type="search" placeholder="Filter by IP, hostname, vendor, OS or service…">
+      <input id="q" type="search" placeholder="Filter by IP, hostname, type, vendor, OS or service…">
       <select id="portFilter"><option value="">Any open port</option></select>
+      <select id="typeFilter"><option value="">Any device type</option></select>
       <select id="hasPorts">
         <option value="">All hosts</option>
         <option value="yes">Only hosts with open ports</option>
@@ -208,6 +209,7 @@
       <thead><tr>
         <th data-sort="ip">IP</th>
         <th data-sort="hostname">Name</th>
+        <th data-sort="device_type">Type</th>
         <th data-sort="vendor" class="opt">Vendor</th>
         <th data-sort="os" class="opt">OS guess</th>
         <th data-sort="nports">Open ports</th>
@@ -319,7 +321,7 @@
     ...h,
     nports: (h.ports || []).length,
     ipkey: (h.ip || "").split(".").map((n) => String(n).padStart(3, "0")).join("."),
-    hay: [h.ip, h.hostname, h.vendor, h.os, h.mac, h.mdns, h.netbios, h.ssdp,
+    hay: [h.ip, h.hostname, h.vendor, h.os, h.mac, h.mdns, h.netbios, h.ssdp, h.device_type, h.device_model,
           ...(h.ports || []).map((p) => p.port + " " + p.service + " " + (p.version || ""))]
          .filter(Boolean).join(" ").toLowerCase(),
   }));
@@ -328,6 +330,11 @@
     .sort((a, b) => parseInt(a) - parseInt(b));
   $("portFilter").insertAdjacentHTML("beforeend",
     allPorts.map((p) => `<option value="${esc(p)}">${esc(p)}</option>`).join(""));
+
+  const allTypes = [...new Set(hosts.map((h) => h.device_type).filter(Boolean))].sort();
+  $("typeFilter").insertAdjacentHTML("beforeend",
+    allTypes.map((t) => `<option value="${esc(t)}">${esc(t)}</option>`).join(""));
+  if (!allTypes.length) $("typeFilter").style.display = "none";
 
   let sortKey = "ipkey", sortDir = 1;
 
@@ -338,6 +345,8 @@
     let list = hosts.filter((h) => {
       if (q && !h.hay.includes(q)) return false;
       if (port && !(h.ports || []).some((p) => p.port === port)) return false;
+      const ty = $("typeFilter").value;
+      if (ty && h.device_type !== ty) return false;
       if (hp === "yes" && h.nports === 0) return false;
       if (hp === "no" && h.nports > 0) return false;
       return true;
@@ -353,18 +362,20 @@
         <td class="ip">${esc(h.ip)}</td>
         <td>${h.hostname ? esc(h.hostname) : '<span class="muted">—</span>'}
             ${h.mac ? `<div class="mac">${esc(h.mac)}</div>` : ""}</td>
+        <td>${h.device_type ? `<span class="chip" title="${esc((h.device_evidence || []).join("\n"))}">${esc(h.device_type)}${h.device_confidence !== "high" ? " ?" : ""}</span>${h.device_model ? `<div class="mac">${esc(h.device_model)}</div>` : ""}` : '<span class="muted">—</span>'}</td>
         <td class="opt">${h.vendor ? esc(h.vendor) : '<span class="muted">—</span>'}</td>
         <td class="opt">${h.os ? esc(h.os) : '<span class="muted">—</span>'}</td>
         <td>${h.nports ? `<div class="chips">${h.ports.map((p) =>
               `<span class="chip" title="${esc(p.version || p.service)}">${esc(p.port)} ${esc(p.service)}</span>`
             ).join("")}</div>` : '<span class="muted">none found</span>'}</td>
       </tr>`).join("")
-      : `<tr><td colspan="5" class="muted" style="padding:20px 14px">No host matches that filter.</td></tr>`;
+      : `<tr><td colspan="6" class="muted" style="padding:20px 14px">No host matches that filter.</td></tr>`;
     $("count").textContent = `${list.length} of ${hosts.length} host${hosts.length === 1 ? "" : "s"} shown`;
   }
 
   $("q").addEventListener("input", render);
   $("portFilter").addEventListener("change", render);
+  $("typeFilter").addEventListener("change", render);
   $("hasPorts").addEventListener("change", render);
   document.querySelectorAll("th[data-sort]").forEach((th) => {
     th.addEventListener("click", () => {

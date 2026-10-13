@@ -12,6 +12,7 @@ SSH_REMOTE_CMD='
     echo "=== listening ==="; (ss -tulpn 2>/dev/null || netstat -tulpn 2>/dev/null) | head -n 40
     echo "=== disk ==="; df -h --output=source,size,pcent,target 2>/dev/null | head -n 12
     echo "=== containers ==="; (docker ps --format "{{.Names}}\t{{.Image}}\t{{.Status}}" 2>/dev/null || echo "no docker")
+    echo "=== model ==="; (tr -d "\000" < /proc/device-tree/model 2>/dev/null; echo) | head -n 1
 '
 
 stage_auth() {

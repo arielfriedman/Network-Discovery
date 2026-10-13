@@ -78,7 +78,7 @@
     <div id="hostsSec" style="display:none">
       <h2>Hosts</h2>
       <div class="tbl-wrap"><table class="data">
-        <thead><tr><th>IP</th><th>Name</th><th>Vendor</th><th>MAC</th><th>OS</th><th>Open services</th></tr></thead>
+        <thead><tr><th>IP</th><th>Name</th><th>Type</th><th>Vendor</th><th>MAC</th><th>OS</th><th>Open services</th></tr></thead>
         <tbody id="hostRows"></tbody></table></div>
     </div>
   </div>
@@ -156,7 +156,9 @@ document.addEventListener("DOMContentLoaded", () => {
     $("loginRows").innerHTML = L.map(c => `<tr><td>${esc(c.cred_name)}</td><td>${esc(c.cred_type)}</td><td>${esc(c.host)}</td>
       <td><span class="badge ${c.result === "ok" ? "" : "new"}">${esc(RES[c.result] || c.result)}</span></td><td class="muted">${esc(c.detail || "")}</td></tr>`).join("");
     $("hostsSec").style.display = d.hosts.length ? "block" : "none";
-    $("hostRows").innerHTML = d.hosts.map(h => `<tr><td>${esc(h.ip)}</td><td>${esc(h.hostname || "")}</td><td>${esc(h.vendor || "")}</td>
+    $("hostRows").innerHTML = d.hosts.map(h => `<tr><td>${esc(h.ip)}</td><td>${esc(h.hostname || "")}</td>
+      <td>${h.device_type ? `<span class="badge" title="${esc((h.device_evidence || []).join("\n"))}">${esc(h.device_type)}${h.device_confidence !== "high" ? " ?" : ""}</span>${h.device_model ? `<div class="muted">${esc(h.device_model)}</div>` : ""}` : ""}</td>
+      <td>${esc(h.vendor || "")}</td>
       <td><code>${esc(h.mac || "")}</code></td><td>${esc(h.os_guess || "")}</td>
       <td>${h.services.map(p => `${p.port}/${p.protocol} ${esc(p.service || "")}`).join(", ")}</td></tr>`).join("");
     history.replaceState(null, "", "#" + ref);
