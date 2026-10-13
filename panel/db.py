@@ -157,6 +157,32 @@ def log(action: str, target: str | None = None, details: dict | None = None,
     _run(fn)
 
 
+def mark_interrupted() -> int:
+    """At panel start nothing can be running yet: scans still marked
+    'running' belong to a panel that stopped mid-scan."""
+    def fn(cur):
+        cur.execute("""UPDATE scans SET status = 'interrupted', finished_at = coalesce(finished_at, now())
+                       WHERE status = 'running'""")
+        return cur.rowcount
+    return _run(fn, 0)
+
+
+def delete_scans(refs: list[str] | None = None, older_than_days: int | None = None) -> list[dict]:
+    """Delete saved scans (their findings, hosts, targets go with them via
+    ON DELETE CASCADE). refs=None and older_than_days=None means all.
+    Running scans are never deleted. Returns [{scan_ref, report_path}] so the
+    caller can remove report files. The activity log is not touched."""
+    def fn(cur):
+        where, args = ["status <> 'running'"], []
+        if refs is not None:
+            where.append("scan_ref = ANY(%s)"); args.append(list(refs))
+        if older_than_days is not None:
+            where.append("started_at < now() - make_interval(days => %s)"); args.append(int(older_than_days))
+        cur.execute(f"DELETE FROM scans WHERE {' AND '.join(where)} RETURNING scan_ref, report_path", args)
+        return [dict(r) for r in cur.fetchall()]
+    return _run(fn, [])
+
+
 def recent_activity(limit: int = 50) -> list[dict]:
     def fn(cur):
         cur.execute("""SELECT a.created_at, u.name AS user_name, a.action, a.target, host(a.source_ip) AS source_ip, a.details

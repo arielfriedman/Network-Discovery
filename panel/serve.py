@@ -367,6 +367,32 @@ def network_options(body: dict) -> dict:
             "pn": bool(o.get("pn", False)) and targets_mode}
 
 
+def _remove_report_files(deleted: list[dict]) -> int:
+    """Delete the report files of deleted scans, but only inside this app's
+    own report folders (panel/reports, discovery/reports)."""
+    removed = 0
+    for d in deleted:
+        ref = re.sub(r"[^A-Za-z0-9_-]", "", d.get("scan_ref") or "")
+        paths = [REPORTS / f"{ref}.json", REPORTS / f"{ref}_dashboard.html"] if ref else []
+        rp = d.get("report_path")
+        if rp:
+            rp = Path(rp).resolve()
+            nd_reports = (ND_DIR / "reports").resolve()
+            if rp.parent.parent == nd_reports and rp.parent.name != "latest":
+                paths.append(rp.parent)          # a whole discovery run folder
+            elif rp.parent == REPORTS.resolve():
+                paths.append(rp)
+        for p in paths:
+            try:
+                if p.is_dir() and not p.is_symlink():
+                    shutil.rmtree(p); removed += 1
+                elif p.exists():
+                    p.unlink(); removed += 1
+            except OSError:
+                pass
+    return removed
+
+
 def start_scan(scope: str, opts: dict, source_ip: str | None = None) -> str:
     opts = dict(opts); opts["scope"] = scope
     if scope == "network":
@@ -545,6 +571,22 @@ class Handler(BaseHTTPRequestHandler):
             except BadRequest as e:
                 return self._send(400, {"error": str(e), "errors": e.detail or []})
             return self._send(200, {"scan_id": sid})
+        if path == "/api/history/delete":
+            body = self._body()
+            refs = body.get("refs") if isinstance(body.get("refs"), list) else None
+            days = body.get("older_than_days")
+            if refs is None and body.get("all") is not True and not isinstance(days, int):
+                return self._send(400, {"error": "say which scans: refs, older_than_days, or all"})
+            if isinstance(days, int) and days < 0:
+                return self._send(400, {"error": "older_than_days must be 0 or more"})
+            deleted = db.delete_scans([str(r)[:40] for r in refs] if refs is not None else None,
+                                      days if isinstance(days, int) else None)
+            files = _remove_report_files(deleted) if body.get("files") else 0
+            db.log("history.delete", None, {"scans": len(deleted), "files_removed": files,
+                                            "refs": [d["scan_ref"] for d in deleted][:50],
+                                            "older_than_days": days, "all": body.get("all") is True},
+                   self.client_address[0])
+            return self._send(200, {"deleted": len(deleted), "files_removed": files})
         if path == "/api/targets/parse":
             body = self._body()
             r = tg.parse(body.get("targets") if isinstance(body.get("targets"), list) else [],
@@ -634,6 +676,9 @@ def main():
         try:   # an update may bring new tables; apply them so saving keeps working
             new = db.migrate()
             print("  database: ready" + (f" (applied {', '.join(new)})" if new else ""))
+            stale = db.mark_interrupted()
+            if stale:
+                print(f"  database: {stale} scan(s) from an earlier run marked interrupted")
         except Exception as e:  # noqa: BLE001
             print(f"  database: not available ({str(e).strip().splitlines()[0] if str(e).strip() else e})")
     else:

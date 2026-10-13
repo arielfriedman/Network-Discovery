@@ -13,7 +13,21 @@
   <div id="nodb" class="note" style="display:none"></div>
 
   <div id="list">
-    <h2>Scans</h2>
+    <div class="hhead"><h2>Scans</h2>
+      <button class="btn ghost" id="clearBtn">Clear history…</button></div>
+    <div class="card clearbox" id="clearBox" style="display:none">
+      <div class="crow">
+        <label>Delete <select id="clearWhich">
+          <option value="all">all saved scans</option>
+          <option value="30">scans older than 30 days</option>
+          <option value="90">scans older than 90 days</option>
+          <option value="365">scans older than a year</option></select></label>
+        <label class="chk"><input type="checkbox" id="clearFiles" checked> also delete their report files</label>
+      </div>
+      <div class="muted">Running scans are kept. The activity log below is not cleared: it is the audit trail, and this deletion is recorded in it.</div>
+      <div class="crow"><button class="btn danger" id="clearGo">Delete</button>
+        <button class="btn ghost" id="clearCancel">Cancel</button><span id="clearMsg"></span></div>
+    </div>
     <div class="tbl-wrap"><table class="data">
       <thead><tr><th>When</th><th>Kind</th><th>Target</th><th>Status</th>
         <th class="num">Risk</th><th class="num">Findings</th><th>Severity</th><th class="num">Hosts</th></tr></thead>
@@ -29,7 +43,8 @@
 
   <div id="detail" style="display:none">
     <div class="row" style="margin-top:22px"><button class="btn ghost" id="backBtn">← All scans</button>
-      <a class="btn ghost" id="jsonLink" href="#" download>Download JSON</a></div>
+      <a class="btn ghost" id="jsonLink" href="#" download>Download JSON</a>
+      <button class="btn ghost danger-text" id="delOne">Delete this scan</button></div>
     <h2 id="dTitle"></h2>
     <div class="kpis" id="kpis"></div>
     <div id="diffBox"></div>
@@ -112,6 +127,27 @@ document.addEventListener("DOMContentLoaded", () => {
       <td>${h.services.map(p => `${p.port}/${p.protocol} ${esc(p.service || "")}`).join(", ")}</td></tr>`).join("");
     history.replaceState(null, "", "#" + ref);
   }
+
+  async function del(body, question) {
+    if (!confirm(question)) return null;
+    try { return await api("/api/history/delete", body); }
+    catch (e) { alert("Could not delete: " + e.message); return null; }
+  }
+  $("clearBtn").onclick = () => { $("clearBox").style.display = $("clearBox").style.display === "none" ? "block" : "none"; $("clearMsg").textContent = ""; };
+  $("clearCancel").onclick = () => { $("clearBox").style.display = "none"; };
+  $("clearGo").onclick = async () => {
+    const w = $("clearWhich").value, files = $("clearFiles").checked;
+    const body = w === "all" ? { all: true, files } : { older_than_days: +w, files };
+    const q = (w === "all" ? "Delete ALL saved scans" : `Delete scans older than ${w} days`) +
+      (files ? " and their report files" : "") + "? This cannot be undone.";
+    const r = await del(body, q);
+    if (r) { $("clearMsg").textContent = `Deleted ${r.deleted} scan(s)` + (files ? `, ${r.files_removed} report file(s)/folder(s).` : "."); loadList(); }
+  };
+  $("delOne").onclick = async () => {
+    const ref = current && current.scan.scan_ref; if (!ref) return;
+    const r = await del({ refs: [ref], files: true }, "Delete this scan and its report files? This cannot be undone.");
+    if (r) { $("backBtn").onclick(); loadList(); }
+  };
 
   $("backBtn").onclick = () => { $("detail").style.display = "none"; $("list").style.display = "block"; history.replaceState(null, "", "/history"); };
   loadList().then(() => { if (location.hash.length > 1) openScan(decodeURIComponent(location.hash.slice(1))); });

@@ -32,6 +32,35 @@ Entry template:
 
 ---
 
+## 2026-10-13 - Clear history
+**Change:** History page: *Clear history…* (all saved scans, or older than
+30 / 90 / 365 days, optionally with report files) and *Delete this scan* on
+the scan detail view. `POST /api/history/delete {refs | older_than_days | all,
+files}`; `db.delete_scans()` (findings, hosts, services, targets go with the
+scan through `ON DELETE CASCADE`). Migration `006_scan_interrupted.sql` adds
+status `interrupted`; the panel marks scans left `running` by an earlier
+panel as `interrupted` at startup.
+**Why:** user asked for an option to clear history.
+**Decisions:**
+- The activity log is not cleared. It is append-only by a database trigger
+  (001) because it is the audit trail; each deletion is itself logged
+  (`history.delete` with count and scan refs). If a way to prune the log is
+  wanted later, it should be a separate, deliberate retention setting.
+- Running scans are never deleted.
+- Report files are only removed inside the app's own folders
+  (`panel/reports/<ref>.*`, a run folder directly under
+  `discovery/reports/`); a `report_path` pointing anywhere else is ignored.
+**Issues / errors:** scans whose panel had been killed during testing were
+stuck as `running` forever, so "clear all" could never remove them -> the
+startup `interrupted` marking above.
+**Verified (scratch Postgres, panel API):** no token 403; empty request 400;
+"older than 30 days" deleted the 3 aged fixtures and their report file /
+run folder (3 removed) while a fixture report outside the app folders was
+kept; a fresh scan and the running scan were kept; delete-one and delete-all
+worked; three `history.delete` entries in the activity log;
+`mark_interrupted()` fixed 4 stale rows. Screenshot of the History page with
+the clear panel open.
+
 ## 2026-10-13 - Scan builder step 1: checklist + target lists
 **Change:**
 - Scan page, *The network*: *Whole local network* or *Specific targets*
