@@ -32,6 +32,59 @@ Entry template:
 
 ---
 
+## 2026-10-13 - Ten more cloud providers
+**Change:** cloud scan now also covers DigitalOcean, Akamai/Linode, Hetzner
+Cloud, Vultr, Scaleway, Cloudflare, IBM Cloud (VPC), OVHcloud, Alibaba Cloud
+and Oracle Cloud through their official REST APIs:
+`discovery/lib/cloud_api.py` (standard library; Oracle signing uses
+python3-cryptography), wired in `scan_cloud.sh` (`cloud_api`), counted in
+`build_json.py` from `raw/cloud/api-*.json`. Credential card types added in
+`creds.py` and `panel/web/creds.js` (with a least-privilege hint per
+provider); the provider list on the Scan page lists all 14; the panel only
+accepts known provider names for `CLOUD_PROVIDERS`. Research reference
+`docs/CLOUD_PROVIDERS.md` (with implementation notes and open [verify]
+items). Test kit: `discovery/tests/cloud_sim.py` +
+`discovery/tests/test_cloud_api.py`.
+**Why:** user asked to add all the providers to the cloud scan.
+**Decisions:**
+- REST instead of 10 more CLIs: nothing extra to install, and every request
+  is a read-only GET that we control. AWS / Azure / GCP / Kubernetes keep
+  their CLIs (SigV4 / MSAL / gcloud auth are better left to the vendors).
+- These providers need a card (no "existing sign-in" to fall back on).
+- Vultr has no read-only API keys - the card says so and suggests the IP
+  allowlist.
+- Pagination links are followed only on the original host; 200-page cap.
+**Issues / errors:**
+- IBM IAM returns HTTP 400 (`BXNIM0415E`) for a wrong API key; the collector
+  first reported that as `unreachable`. Caught by the simulator test, fixed.
+- Card type list reset to the first entry after every *Add credential*
+  (found when the scripted screenshot added two AWS cards instead of OVH and
+  Vultr) -> the page remembers the last type.
+- API provider cards said "leave this card out to use the CLI's own
+  sign-in", which only applies to the four CLI providers -> hint fixed.
+- OVH endpoint (a select with a default) was flagged "missing" until
+  touched -> required-field check merges defaults (same class of bug as the
+  SSH / SNMP field visibility in step 2).
+- Cloud tile text still said "AWS, Azure, GCP and Kubernetes. Needs a cloud
+  CLI" -> updated.
+**Verified:**
+- `test_cloud_api.py`: 20/20 (each provider with valid credentials -> all
+  resource lists complete across pages, including IBM over 2 regions,
+  Scaleway across zones, OCI over root + 1 compartment; and with wrong
+  credentials -> `auth_failed`).
+- `discover.sh --cloud-only` with DigitalOcean + Cloudflare (valid) and
+  Hetzner (wrong token) cards against the simulator: counts in the report,
+  Hetzner flagged as rejected, no token in summary / dashboard / findings.
+- Through the panel API: SSH card in a cloud scan -> 400; Linode + Scaleway
+  (valid) and IBM (wrong key) -> scan complete, logins `ok`/`ok`/
+  `auth_failed`, cloud counts saved in Postgres.
+- Screenshots of the cloud card form (Hetzner, OVHcloud, Vultr).
+**Not verified / follow-up:** no real account for any of the ten providers
+was used. The simulator is built from our reading of the docs, so it can't
+catch a misreading; the [verify] items in `docs/CLOUD_PROVIDERS.md` (Vultr
+endpoints, Hetzner DNS path, OCI DNS, Alibaba policy names, IBM role
+pairing) need a real account each.
+
 ## 2026-10-13 - Scan builder step 2: credentials
 **Change:**
 - Scan page: credential cards - network scan (checklist item *Log in with

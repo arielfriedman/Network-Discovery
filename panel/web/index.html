@@ -21,7 +21,7 @@
         <div class="d">Find the devices and services on your LAN, using the network-discovery tool.</div></div>
       <div class="scope" data-scope="cloud">
         <div class="t">The cloud</div>
-        <div class="d">List AWS, Azure, GCP and Kubernetes resources. Needs a cloud CLI that is signed in.</div></div>
+        <div class="d">List networks, servers, firewalls and DNS in AWS, Azure, GCP, Kubernetes and ten more providers, read-only.</div></div>
     </div>
 
     <div class="opts" id="opts"></div>
@@ -59,16 +59,19 @@
 document.addEventListener("DOMContentLoaded",function(){
   const $=id=>document.getElementById(id);
   let scope="host", ENV=null;
-  const PROV={all:"All installed",aws:"AWS",azure:"Azure",gcp:"Google Cloud",k8s:"Kubernetes"};
+  const PROV={all:"All (installed CLIs + added cards)",aws:"AWS",azure:"Azure",gcp:"Google Cloud",k8s:"Kubernetes",
+    digitalocean:"DigitalOcean",linode:"Akamai / Linode",hetzner:"Hetzner Cloud",vultr:"Vultr",scaleway:"Scaleway",
+    cloudflare:"Cloudflare",ibm:"IBM Cloud",ovh:"OVHcloud",alibaba:"Alibaba Cloud",oci:"Oracle Cloud"};
+  const CLI_PROV=["aws","azure","gcp","k8s"];
   function opts(){
     if(scope==="host") return [["mode","Mode",[["workstation","Workstation (this PC / laptop)"],["server","Server (hosts services)"]]],
                                ["scan_type","Depth",[["quick","Quick"],["full","Full (all ports, slower)"]]]];
     return [["provider","Provider",Object.keys(PROV).map(k=>
-      [k, PROV[k]+(k!=="all"&&ENV&&!ENV.clouds[k]?" (not installed)":"")])]];
+      [k, PROV[k]+(CLI_PROV.includes(k)&&ENV&&!ENV.clouds[k]?" (CLI not installed)":!CLI_PROV.includes(k)&&k!=="all"?" (API, needs a card)":"")])]];
   }
   // ── network: targets + checklist ──────────────────────────────────────────
   const NET={mode:"network", typed:"", files:[], parsed:null, opts:{names:true,ports:"off",vuln:false,wan:true,pn:false,logins:false}, wanTouched:false};
-  const NET_CRED=["ssh","snmp"], CLOUD_CRED=["aws","azure","gcp","k8s"];
+  const NET_CRED=["ssh","snmp"], CLOUD_CRED=["aws","azure","gcp","k8s","digitalocean","linode","hetzner","vultr","scaleway","cloudflare","ibm","ovh","alibaba","oci"];
   const credTypes=()=>scope==="network"?NET_CRED:scope==="cloud"?CLOUD_CRED:[];
   const KIND={ip:"IP",cidr:"range",mac:"MAC",host:"hostname"};
   function netEntries(){
@@ -187,8 +190,9 @@ document.addEventListener("DOMContentLoaded",function(){
     }
     if(scope==="cloud"){
       const have=Object.keys(ENV.clouds).filter(k=>ENV.clouds[k]);
-      if(!have.length){ lines.push('<span class="bad">✗</span> No cloud tool is installed (aws, az, gcloud, kubectl), so a cloud scan will find nothing. Install one and sign in first.'); }
-      else lines.push('<span class="ok">✓</span> Installed: '+have.map(k=>PROV[k]).join(", ")+'. They must also be signed in.');
+      if(have.length) lines.push('<span class="ok">✓</span> CLIs installed: '+have.map(k=>PROV[k]).join(", ")+'. They use their own sign-in unless you add a card.');
+      else lines.push('<span class="muted">No cloud CLI (aws, az, gcloud, kubectl) is installed. Providers reached over their API only need a credential card.</span>');
+      if(!have.length && !Creds.count(CLOUD_CRED)){ ok=false; lines.push('<span class="bad">✗</span> Add a credential card, or install and sign in to a cloud CLI.'); }
     }
     const ct=credTypes();
     if(ct.length && (scope==="cloud" || NET.opts.logins)){

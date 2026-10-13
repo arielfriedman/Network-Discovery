@@ -52,7 +52,11 @@ TYPES = {
     "scaleway":     ({"secret_key"}, {"access_key", "project_id"}, {"secret_key"}),
     "cloudflare":   ({"token"}, set(), {"token"}),
     "ibm":          ({"api_key"}, {"regions"}, {"api_key"}),
+    "ovh":          ({"app_key", "app_secret", "consumer_key"}, {"endpoint"}, {"app_secret", "consumer_key"}),
+    "alibaba":      ({"access_key_id", "access_key_secret"}, {"regions"}, {"access_key_secret"}),
+    "oci":          ({"tenancy", "user", "fingerprint", "private_key"}, {"region"}, {"private_key"}),
 }
+API_TYPES = {"digitalocean", "linode", "hetzner", "vultr", "scaleway", "cloudflare", "ibm", "ovh", "alibaba", "oci"}
 HOST_TYPES = {"ssh", "snmp"}            # credentials that apply per host
 SNMP_AUTH = {"MD5", "SHA", "SHA-224", "SHA-256", "SHA-384", "SHA-512"}
 SNMP_PRIV = {"DES", "AES", "AES-192", "AES-256"}
@@ -95,7 +99,7 @@ def validate(s: dict, n: int) -> dict:
             raise Bad(f"credential {n}: field {k} is too long")
         if "\0" in v:
             raise Bad(f"credential {n}: field {k} contains a NUL byte")
-        if k not in ("key", "key_json", "kubeconfig"):
+        if k not in ("key", "key_json", "kubeconfig", "private_key"):
             v = v.strip()
             if "\n" in v or "\r" in v:
                 raise Bad(f"credential {n}: field {k} must be one line")
@@ -146,6 +150,14 @@ def validate(s: dict, n: int) -> dict:
             raise Bad(f"credential {n} (gcp): key_json must be a service account key file (JSON)")
     if t == "aws" and fields.get("region") and not re.match(r"^[a-z]{2}(-[a-z]+)+-\d$", fields["region"]):
         raise Bad(f"credential {n} (aws): region {fields['region']!r} does not look like an AWS region")
+
+    if t == "ovh" and fields.get("endpoint", "eu") not in ("eu", "ca", "us"):
+        raise Bad(f"credential {n} (ovh): endpoint must be eu, ca or us")
+    if t == "oci" and "PRIVATE KEY" not in fields["private_key"]:
+        raise Bad(f"credential {n} (oci): the private key does not look like a PEM private key")
+    for k in ("regions", "region"):
+        if k in fields and not re.match(r"^[a-z0-9-]+(\s*,\s*[a-z0-9-]+)*$", fields[k]):
+            raise Bad(f"credential {n} ({t}): {k} must be region names separated by commas")
 
     hosts = _clean_hosts(s.get("hosts")) if t in HOST_TYPES else []
     return {"id": f"c{n}", "type": t, "name": name, "hosts": hosts, "fields": fields,

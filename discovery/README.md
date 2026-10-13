@@ -56,7 +56,7 @@ Design: [docs/SCAN_BUILDER.md](../docs/SCAN_BUILDER.md).
 | 3 Deep scan | per-host `nmap -sV -sC` with OS fingerprinting, run in parallel | for SYN + OS |
 | 4 WAN | routes, DNS config, gateway service scan, `mtr` path, public IP + ASN | for gateway scan |
 | 5 Authenticated | SNMP walk, SSH system collection — **asks for credentials** | no |
-| 6 Cloud | AWS, Azure, GCP and Kubernetes inventory | no |
+| 6 Cloud | AWS, Azure, GCP and Kubernetes via their CLIs; DigitalOcean, Linode, Hetzner, Vultr, Scaleway, Cloudflare, IBM Cloud, OVHcloud, Alibaba Cloud and Oracle Cloud via their REST APIs (credential card needed, see [docs/CLOUD_PROVIDERS.md](../docs/CLOUD_PROVIDERS.md)) | no |
 
 Stages 5 and 6 are off or auto-skipped unless you ask for them.
 

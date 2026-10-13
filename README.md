@@ -42,7 +42,7 @@ sudo ./start.sh     # same, with the checks that need root (ARP sweep, OS detect
 
 | Page | What it does |
 |---|---|
-| **Scan** | pick *this host*, *the network* or *the cloud*, start, watch live progress, read the dashboard. For the network: the whole local range or a list of IPs, ranges, MAC addresses and hostnames (typed or uploaded as `ip.txt` / `mac.txt` / `hostnames.txt`), plus a checklist of what to run. Optional credential cards (SSH, SNMP, AWS, Azure, GCP, Kubernetes) for logins, used for that scan only or remembered in the encrypted vault |
+| **Scan** | pick *this host*, *the network* or *the cloud* (AWS, Azure, GCP, Kubernetes, DigitalOcean, Linode, Hetzner, Vultr, Scaleway, Cloudflare, IBM Cloud, OVHcloud, Alibaba Cloud, Oracle Cloud - read-only), start, watch live progress, read the dashboard. For the network: the whole local range or a list of IPs, ranges, MAC addresses and hostnames (typed or uploaded as `ip.txt` / `mac.txt` / `hostnames.txt`), plus a checklist of what to run. Optional credential cards (SSH, SNMP, AWS, Azure, GCP, Kubernetes) for logins, used for that scan only or remembered in the encrypted vault |
 | **History** | every saved scan, what is new or resolved since the previous one, and the activity log. *Clear history…* deletes one scan, scans older than 30 / 90 / 365 days, or all (optionally with their report files); the activity log is kept as the audit trail |
 | **Devices** | add FortiGate, Cisco, Palo Alto and Check Point devices, back up configs, run wizards |
 

@@ -22,6 +22,31 @@ live API before relying on them. Implementation status is in `DEVLOG.md`.
 | Alibaba Cloud | RAM AccessKey, `ReadOnlyAccess` **[verify names]** | RPC signature V1 / V3 `ACS3-HMAC-SHA256` | yes |
 | OVHcloud | application key + secret + consumer key with `GET /*` only | `X-Ovh-*` headers, `$1$` + SHA1 signature | for IPs / LBs |
 
+## Implementation (2026-10-13)
+
+| Provider | How SentinelScan reaches it | Card fields |
+|---|---|---|
+| AWS, Azure, GCP, Kubernetes | their CLIs (`aws`, `az`, `gcloud`, `kubectl`); without a card the CLI's own sign-in is used | see `creds.py` |
+| DigitalOcean, Linode, Hetzner, Vultr, Scaleway, Cloudflare, IBM Cloud, OVHcloud, Alibaba Cloud, Oracle Cloud | `discovery/lib/cloud_api.py`: standard-library HTTPS, GET only, no CLI needed; a card is required | token / keys as listed above |
+
+- Results: `raw/cloud/api-<provider>.json` (full lists), counts in
+  `findings.json` `cloud` and on the dashboard; each login in
+  `credential_use` (`ok`, `auth_failed`, `unreachable`, `error`).
+- Pagination is followed only on the host the request went to; a 200-page
+  safety limit stops runaway loops.
+- Oracle Cloud signing needs `python3-cryptography` (present on Ubuntu /
+  Mint desktops; the scan says so if it's missing). Passphrase-protected
+  OCI keys are not supported.
+- IBM IAM answers a wrong API key with HTTP 400 (not 401); treated as a
+  rejected login.
+- Tests: `python3 discovery/tests/test_cloud_api.py` runs every provider
+  against `discovery/tests/cloud_sim.py` (a local stand-in built from the
+  documented shapes: bearer tokens, OVH / Alibaba / OCI signatures
+  recomputed, paging in twos) with good and wrong credentials. The
+  simulator confirms the collector matches **our reading** of the docs; it
+  cannot confirm the live APIs. Items marked [verify] above remain open
+  until checked against real accounts.
+
 ## Endpoints
 
 ### DigitalOcean - `https://api.digitalocean.com/v2`

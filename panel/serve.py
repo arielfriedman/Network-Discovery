@@ -50,6 +50,8 @@ CTYPES = {".html": "text/html; charset=utf-8", ".css": "text/css; charset=utf-8"
           ".js": "text/javascript; charset=utf-8", ".svg": "image/svg+xml"}
 ND_DIR = APP_DIR.parent / "discovery"  # network/cloud tool, same repo
 ND_SETTINGS = ND_DIR / "config" / "settings.conf"
+CLOUD_PROVIDERS = ("aws", "azure", "gcp", "k8s", "digitalocean", "linode", "hetzner", "vultr",
+                   "scaleway", "cloudflare", "ibm", "ovh", "alibaba", "oci")
 MAX_BODY = 2 * 1024 * 1024             # target lists are the largest request
 
 # Per-launch secret the panel's own pages send with every change request.
@@ -265,7 +267,7 @@ def run_shell_scan(sid: str, opts: dict) -> None:
     if scope == "cloud":
         args.append("--cloud-only")
         prov = opts.get("provider", "all")
-        if prov != "all":
+        if prov != "all" and prov in CLOUD_PROVIDERS:
             env["CLOUD_PROVIDERS"] = prov
     else:
         args.append("--no-cloud")

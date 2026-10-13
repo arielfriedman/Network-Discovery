@@ -7,23 +7,57 @@ stage_cloud() {
   [[ "$DO_CLOUD" == 1 ]] || { info "cloud inventory disabled"; return 0; }
   section "Stage 6 - cloud network inventory"
 
-  local any=0
-  have aws     || have az || have gcloud || have kubectl || {
+  local any=0 p
+  # CLOUD_PROVIDERS narrows the run, e.g. CLOUD_PROVIDERS="aws" (default: all)
+  local want=" ${CLOUD_PROVIDERS:-aws azure gcp k8s $API_PROVIDERS} "
+
+  # providers reached over their REST API need a credential card, no CLI
+  local api_cards=0
+  for p in $API_PROVIDERS; do
+    [[ "$want" == *" $p "* ]] && (( $(cred_count "$p") > 0 )) && api_cards=1
+  done
+  if ! have aws && ! have az && ! have gcloud && ! have kubectl && (( ! api_cards )); then
     info "no cloud CLI installed"
     offer_cloud_clis || { info "skipping cloud stage"; return 0; }
-  }
+  fi
 
-  vault_unlock --optional >/dev/null 2>&1 || true
+  (( HAVE_CREDS )) || vault_unlock --optional >/dev/null 2>&1 || true
 
-  # CLOUD_PROVIDERS narrows the run, e.g. CLOUD_PROVIDERS="aws" (default: all)
-  local want=" ${CLOUD_PROVIDERS:-aws azure gcp k8s} "
   [[ "$want" == *" aws "*   ]] && cloud_aws   && any=1
   [[ "$want" == *" azure "* ]] && cloud_azure && any=1
   [[ "$want" == *" gcp "*   ]] && cloud_gcp   && any=1
   [[ "$want" == *" k8s "*   ]] && cloud_k8s   && any=1
+  for p in $API_PROVIDERS; do
+    [[ "$want" == *" $p "* ]] && cloud_api "$p" && any=1
+  done
 
   (( any )) || info "no cloud account reachable - nothing collected"
   CLOUD_FOUND=$any
+}
+
+# ---------------------------------------------------------------- REST API providers
+# DigitalOcean, Linode, Hetzner, Vultr, Scaleway, Cloudflare, IBM Cloud,
+# OVHcloud, Alibaba Cloud, Oracle Cloud: lib/cloud_api.py, read-only GETs,
+# credentials from the card only (docs/CLOUD_PROVIDERS.md).
+API_PROVIDERS="digitalocean linode hetzner vultr scaleway cloudflare ibm ovh alibaba oci"
+
+cloud_api() {
+  local p="$1" id name res
+  (( $(cred_count "$p") > 0 )) || return 1
+  id="$(cred_first "$p")"; name="$(cred_name "$id")"
+  mkdir -p "$RAW/cloud"
+  [[ "${ND_PROGRESS:-0}" == 1 ]] && printf '@@cmd %s\n' "cloud_api.py $p (read-only REST)"
+  step "$p inventory ($name)"
+  res=$(python3 "$BASE_DIR/lib/cloud_api.py" "$p" "$SECURE_TMP" "$RAW/cloud" 2>&1 | tail -n1 | scrub)
+  local r="${res%%$'\t'*}" detail="${res#*$'\t'}"
+  [[ "$r" =~ ^(ok|auth_failed|unreachable|error)$ ]] || { detail="$res"; r=error; }
+  cred_result "$p" "$name" "$p" "$r" "$detail"
+  if [[ "$r" == ok ]]; then
+    info "$p: $(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(", ".join(f"{v} {k}" for k,v in d["counts"].items()))' "$RAW/cloud/api-$p.json")"
+    return 0
+  fi
+  err "$p: ${r//_/ }${detail:+ - $detail}"
+  return 1
 }
 
 # ---------------------------------------------------------------- AWS

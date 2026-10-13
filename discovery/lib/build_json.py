@@ -127,6 +127,15 @@ if cdir and os.path.isdir(cdir):
             cloud_total += n
         if got:
             cloud[prov] = got
+    # REST API providers (lib/cloud_api.py)
+    for f in sorted(glob.glob(os.path.join(cdir, "api-*.json"))):
+        try:
+            d = json.load(open(f, encoding="utf-8"))
+        except Exception:
+            continue
+        if d.get("counts"):
+            cloud[d.get("label") or d.get("provider")] = d["counts"]
+            cloud_total += sum(d["counts"].values())
     for f in glob.glob(os.path.join(cdir, "k8s-*.txt")):
         n = max(0, len(lines(f)) - 1)
         cloud.setdefault("kubernetes", {})[os.path.basename(f)[4:-4]] = n

@@ -34,8 +34,33 @@
     k8s:   { label: "Kubernetes", fields: [
       ["kubeconfig", "kubeconfig", "textarea", "apiVersion: v1\nkind: Config\n…"], ["context", "Context (optional)", "text", ""]],
       file: "kubeconfig", hint: "A ServiceAccount bound to the read-only ClusterRole view." },
+    digitalocean: { label: "DigitalOcean", fields: [["token", "API token", "password", ""]],
+      hint: "Personal access token with the Read Only scope." },
+    linode: { label: "Akamai / Linode", fields: [["token", "API token", "password", ""]],
+      hint: "Personal access token with every scope set to Read Only." },
+    hetzner: { label: "Hetzner Cloud", fields: [["token", "API token", "password", ""]],
+      hint: "Project API token with Read permission (one project per token)." },
+    vultr: { label: "Vultr", fields: [["token", "API key", "password", ""]],
+      hint: "Vultr API keys cannot be made read-only: limit the key to this machine's IP in Vultr's Access Control." },
+    scaleway: { label: "Scaleway", fields: [["secret_key", "Secret key", "password", ""], ["project_id", "Project ID (optional)", "text", ""]],
+      hint: "IAM application API key with the AllProductsReadOnly permission set." },
+    cloudflare: { label: "Cloudflare", fields: [["token", "API token", "password", ""]],
+      hint: "Custom token: Zone Read, DNS Read, Account Settings Read." },
+    ibm: { label: "IBM Cloud", fields: [["api_key", "API key", "password", ""], ["regions", "Regions (optional)", "text", "us-south, eu-de"]],
+      hint: "Service ID API key with Viewer + Reader on VPC Infrastructure Services." },
+    ovh: { label: "OVHcloud", fields: [["endpoint", "Endpoint", "select", [["eu", "Europe"], ["ca", "Canada"], ["us", "US"]]],
+      ["app_key", "Application key", "text", ""], ["app_secret", "Application secret", "password", ""], ["consumer_key", "Consumer key", "password", ""]],
+      hint: "Create the keys at api.ovh.com/createToken with rights GET /* only." },
+    alibaba: { label: "Alibaba Cloud", fields: [["access_key_id", "AccessKey ID", "text", ""], ["access_key_secret", "AccessKey secret", "password", ""],
+      ["regions", "Regions (optional)", "text", "eu-central-1"]],
+      hint: "RAM user AccessKey with the ReadOnlyAccess policy." },
+    oci: { label: "Oracle Cloud", fields: [["tenancy", "Tenancy OCID", "text", "ocid1.tenancy…"], ["user", "User OCID", "text", "ocid1.user…"],
+      ["fingerprint", "Key fingerprint", "text", "aa:bb:…"], ["region", "Region", "text", "us-ashburn-1"],
+      ["private_key", "API private key (PEM)", "textarea", "-----BEGIN PRIVATE KEY-----"]],
+      file: "private_key", hint: "API signing key of a user in a group allowed to read all-resources in tenancy." },
   };
-  const DEFAULTS = { auth: "password", version: "2c", level: "authPriv", auth_proto: "SHA", priv_proto: "AES" };
+  const CLI_TYPES = ["aws", "azure", "gcp", "k8s"];
+  const DEFAULTS = { auth: "password", version: "2c", level: "authPriv", auth_proto: "SHA", priv_proto: "AES", endpoint: "eu" };
   const S = { cards: [], saved: [], use: new Set(), pass: "", next: 1 };
   let box = null, types = [], onChange = () => {};
 
@@ -59,7 +84,7 @@
         <button class="x" data-rm="${i}" title="Remove">×</button></div>
       ${t.hosts ? `<label class="cf wide"><span>For hosts (IPs or ranges, blank = any host that offers ${t.label})</span>
         <input data-c="${i}" data-f="_hosts" placeholder="172.16.0.30, 172.16.4.0/24" value="${esc(c.hosts)}"></label>` : ""}
-      ${t.hint ? `<div class="muted chint">${t.hint} Leave this card out to use the CLI's own sign-in on this machine.</div>` : ""}
+      ${t.hint ? `<div class="muted chint">${t.hint}${CLI_TYPES.includes(c.type) ? " Leave this card out to use the CLI's own sign-in on this machine." : ""}</div>` : ""}
       <div class="cfields">${fields}</div>
       ${t.file ? `<label class="filebtn">Load file…<input type="file" data-load="${i}"></label>` : ""}
       <label class="chk"><input type="checkbox" data-c="${i}" data-f="_save" ${c.save ? "checked" : ""}> Remember in vault</label>
@@ -72,7 +97,7 @@
     const needPass = S.cards.some(c => c.save) || S.use.size;
     box.innerHTML = `
       <div class="cards">${S.cards.map(cardHTML).join("")}</div>
-      <div class="cadd"><select id="credType">${types.map(t => `<option value="${t}">${TYPES[t].label}</option>`).join("")}</select>
+      <div class="cadd"><select id="credType">${types.map(t => `<option value="${t}" ${t === S.lastType ? "selected" : ""}>${TYPES[t].label}</option>`).join("")}</select>
         <button class="btn ghost" id="credAdd" type="button">Add credential</button></div>
       ${savedHere.length ? `<div class="csaved"><div class="muted">Saved in the vault:</div>` + savedHere.map(s => `
         <label class="chk"><input type="checkbox" data-use="${esc(s.vault_key)}" ${S.use.has(s.vault_key) ? "checked" : ""}>
@@ -82,8 +107,9 @@
         <input id="vaultPass" type="password" autocomplete="new-password" value="${esc(S.pass)}"></label>` : ""}
       <div class="muted chint">Passwords are used for this scan only and never written to disk, unless you tick
         <i>Remember in vault</i> (GPG-encrypted). The database keeps only names and results.</div>`;
+    box.querySelector("#credType").onchange = e => { S.lastType = e.target.value; };
     box.querySelector("#credAdd").onclick = () => {
-      const t = box.querySelector("#credType").value;
+      const t = box.querySelector("#credType").value; S.lastType = t;
       S.cards.push({ type: t, name: "", hosts: "", fields: {}, save: false, id: S.next++ }); render(); onChange();
     };
     box.querySelectorAll("[data-rm]").forEach(b => b.onclick = () => { S.cards.splice(+b.dataset.rm, 1); render(); onChange(); });
@@ -142,7 +168,8 @@
           if (g.version === "3" && g.level !== "noAuthNoPriv" && (g.auth_pass || "").length < 8) p.push(`${n}: auth password needs 8+ characters`);
           if (g.version === "3" && g.level === "authPriv" && (g.priv_pass || "").length < 8) p.push(`${n}: privacy password needs 8+ characters`);
         } else {
-          t.fields.filter(d => !/optional/.test(d[1]) && !f[d[0]] && d[0] !== "region").forEach(d => p.push(`${n}: ${d[1]} is missing`));
+          const g = { ...DEFAULTS, ...f };
+          t.fields.filter(d => !/optional/.test(d[1]) && !g[d[0]] && d[0] !== "region").forEach(d => p.push(`${n}: ${d[1]} is missing`));
         }
       });
       if ((S.cards.some(c => allowed.includes(c.type) && c.save) || S.use.size) && !S.pass) p.push("the vault passphrase is needed");
@@ -163,7 +190,8 @@
     },
     // after a scan starts: forget every secret this page held
     wipe() {
-      S.cards.forEach(c => Object.keys(c.fields).forEach(k => { if (!["user", "auth", "version", "level", "auth_proto", "priv_proto", "port", "region", "tenant_id", "client_id", "subscription", "project", "context", "access_key_id"].includes(k)) c.fields[k] = ""; }));
+      S.cards.forEach(c => Object.keys(c.fields).forEach(k => { if (!["user", "auth", "version", "level", "auth_proto", "priv_proto", "port", "region", "tenant_id", "client_id", "subscription", "project", "context", "access_key_id",
+          "regions", "project_id", "endpoint", "app_key", "tenancy", "fingerprint"].includes(k)) c.fields[k] = ""; }));
       S.cards = S.cards.filter(c => !c.save);
       S.pass = ""; render();
       load();
