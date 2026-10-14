@@ -7,7 +7,7 @@ confirmed from a primary source; check them on real hardware.
 
 | Vendor | Models | Status |
 |---|---|---|
-| Fortinet | **FG-100F**, **FG-200E** | 200E: end of sale Oct 2025, supported to Oct 2030 (replacement 200G). Both run FortiOS 7.4 and 7.6 ([7.6 supported models](https://docs.fortinet.com/document/fortigate/7.6.0/fortios-release-notes/290702/supported-models)). |
+| Fortinet | **FG-100F**, **FG-200E** | Both supported in FortiOS 7.4, 7.6 and **8.0** ([8.0.1 build 0245 supported models](https://docs.fortinet.com/document/fortigate/8.0.1/fortios-release-notes/760203/introduction-and-supported-models), [7.6.7](https://docs.fortinet.com/document/fortigate/7.6.7/fortios-release-notes/760203/introduction-and-supported-models)). **Correction 2026-10-14:** an earlier version of this file said the 200E reached end of sale in Oct 2025; no end-of-order notice could be found ([Fortinet Community](https://community.fortinet.com/support-forum-92/fortigate-200e-eol-190120)) - check the support portal's product life cycle page. Newer model in the range: 200G. |
 | Cisco switches | **Catalyst 9200/9200L, 9300/9300L** (IOS-XE); **Catalyst 1200/1300** (Cisco Business) | Catalyst 1000 end of sale Apr 2025; CBS250/350 end of sale Oct 2024, replaced by Catalyst 1200/1300. |
 | Cisco routers | **Catalyst 8200/8300 Edge**, **ISR 1100 (C1121/C1131/C1161)** | ISR 4000 last order Nov 2023 ([EOL14896](https://www.cisco.com/c/en/us/products/collateral/routers/4000-series-integrated-services-routers-isr/select-isr4k-series-platform-eol.html)). C8000/ISR1100 can run in autonomous or SD-WAN controller mode; the wizard needs autonomous. |
 | Palo Alto | **PA-440/450/460**, **PA-1410/1420**, **PA-3410/3420**, VM-Series | PA-220 end of sale 2023; PA-820/850 end of sale Aug 2024 → PA-1400 ([HW EoL](https://paloaltonetworks.com/services/support/end-of-life-announcements/hardware-end-of-life-dates)). PA-500 series (2025, PAN-OS 12.1.2+) succeeds PA-400. |
@@ -17,7 +17,7 @@ confirmed from a primary source; check them on real hardware.
 
 | Platform | Versions |
 |---|---|
-| FortiGate | FortiOS 7.4 (EoS Nov 2028), 7.6 (EoS Jan 2030) |
+| FortiGate | FortiOS 7.4 (EoS Nov 2028), 7.6 (EoS Jan 2030), 8.0 (current; 8.0.1 build 0245) |
 | Cat 9200/9300, C8200/8300, ISR1100 | IOS-XE 17.x (17.9 / 17.12 extended; 17.15 / 17.18 current) |
 | Catalyst 1200/1300 | Cisco Business firmware 4.x, not IOS **[verify]** |
 | PA-400/1400/3400 | PAN-OS 11.1, 11.2, 12.1 ([matrix](https://docs.paloaltonetworks.com/compatibility-matrix/supported-os-releases-by-model/palo-alto-networks-next-gen-firewalls)) |
@@ -28,7 +28,7 @@ confirmed from a primary source; check them on real hardware.
 
 | Vendor | Interface | Notes |
 |---|---|---|
-| FortiGate | REST API `/api/v2/cmdb`, `/api/v2/monitor`, header `Authorization: Bearer <token>` | Token goes in the header (required from 7.4.5). Config backup `/api/v2/monitor/system/config/backup?scope=global` is GET on ≤7.4 and **POST on 7.6+**, needs super_admin. Changes apply immediately. |
+| FortiGate | REST API `/api/v2/cmdb`, `/api/v2/monitor`, header `Authorization: Bearer <token>` | Token goes in the header (required from 7.4.5; 8.0 is token-only). Config backup `/api/v2/monitor/system/config/backup?scope=global` is GET on ≤7.4 and **POST on 7.6+** (8.0: not confirmed **[verify]**), needs super_admin. **8.0:** a REST API admin's trusted hosts may not be 0.0.0.0/0 ([8.0 REST API administrator](https://docs.fortinet.com/document/fortigate/8.0.0/administration-guide/399023/rest-api-administrator)). Changes apply immediately. |
 | Cisco IOS-XE | SSH CLI | RESTCONF/NETCONF exist (Cat9300 16.8.1a+, Cat9200 16.9.2+, C8000 17.3.1+) but SSH works everywhere. Safe changes: `configure terminal revert timer <min>` + `configure confirm` (needs `archive`). |
 | Cisco Catalyst 1200/1300 | SSH CLI | No RESTCONF/NETCONF ([C1300 datasheet](https://www.cisco.com/c/en/us/products/collateral/switches/catalyst-1300-series-switches/nb-06-cat1300-ser-data-sheet-cte-en.html)); no auto-revert. |
 | Palo Alto | XML API `/api/` | `type=keygen` (POST user/password) → header `X-PAN-KEY`. `type=config&action=set|edit|delete|get|show&xpath=…&element=…` edits the candidate config; `type=commit` + poll `show jobs id`. `type=export&category=configuration` for backup. |

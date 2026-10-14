@@ -779,6 +779,8 @@ class Handler(BaseHTTPRequestHandler):
             "disconnect": lambda: devmgr.disconnect(dev) or {"ok": True},
             "backup": lambda: devmgr.take_backup(dev, "manual"),
             "preview": lambda: devmgr.preview(dev, str(b.get("wizard", "")), b.get("params") or {}),
+            "mode": lambda: devmgr.set_read_only(dev, b.get("read_only") is not False,
+                                                 str(b.get("confirm_name") or "")),
         }
         if what not in calls:
             return self._send(404, {"error": "not found"})

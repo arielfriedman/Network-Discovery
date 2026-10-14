@@ -84,6 +84,7 @@
       <button class="btn ghost" id="backBtn">← All devices</button>
     </div>
     <div id="dHead" style="font-size:22px;font-weight:700;margin:18px 0 2px;letter-spacing:-.01em"></div>
+    <div id="roBox" class="note" style="margin:10px 0"></div>
     <div class="row" style="margin-top:-4px">
       <span id="dSub" class="muted"></span><span style="flex:1"></span>
       <button class="btn ghost hide" id="discBtn">Disconnect</button>
@@ -203,7 +204,7 @@ document.addEventListener("DOMContentLoaded", () => {
       <div class="card dev" data-id="${d.id}"><div class="n"><span class="dot ${d.connected ? "on" : ""}"></span>${esc(d.name)}</div>
         <div class="m">${esc((vendor(d.vendor) || {}).label || d.vendor)} · ${esc(d.model || "")}</div>
         <div class="m">${esc(d.address)}${d.port ? ":" + d.port : ""}${d.facts && d.facts.version ? " · " + esc(d.facts.version) : ""}</div>
-        <div class="s">${d.connected ? "Connected" : "Not connected"} · ${d.last_backup ? "backed up " + esc(fmtTime(d.last_backup)) : "no backup yet"}
+        <div class="s">${d.read_only !== false ? '<span class="badge">read-only</span> ' : '<span class="badge new">changes allowed</span> '}${d.connected ? "Connected" : "Not connected"} · ${d.last_backup ? "backed up " + esc(fmtTime(d.last_backup)) : "no backup yet"}
           · ${d.changes} change(s)</div></div>`).join("")
       : '<div class="empty">No devices yet. Click <b>Add device</b>.</div>';
     document.querySelectorAll(".dev").forEach(el => el.onclick = () => openDevice(+el.dataset.id));
@@ -222,7 +223,29 @@ document.addEventListener("DOMContentLoaded", () => {
       <input data-k="${a.name}" type="${a.type === "password" ? "password" : "text"}" value="${esc(a.default || "")}" autocomplete="off">
       ${a.help ? `<span class="help">${esc(a.help)}</span>` : ""}</div>`).join("");
     $("pinBox").innerHTML = ""; $("connErr").textContent = "";
+    renderReadOnly();
     setConnected(DEV.connected, tab, wz);
+  }
+  // read-only mode (default for every device): changes need it switched off,
+  // with the device name typed back
+  function renderReadOnly() {
+    const ro = DEV.read_only !== false;
+    $("roBox").className = "note " + (ro ? "okbox" : "warnbox");
+    $("roBox").innerHTML = ro
+      ? `<b>Read-only.</b> The panel can connect, show the overview and take backups, but not change this device.
+         Previews still show exactly what a wizard would send. <button class="btn ghost" id="roOff" style="margin-left:8px">Allow changes…</button>`
+      : `<b>Changes allowed</b> on this device. Every change is previewed first and backed up before it is applied.
+         <button class="btn ghost" id="roOn" style="margin-left:8px">Back to read-only</button>`;
+    const set = async (read_only, confirm_name) => {
+      try { await api(`/api/devices/${DEV.id}/mode`, { read_only, confirm_name }); DEV.read_only = read_only; renderReadOnly(); loadList(); }
+      catch (e) { alert(e.message); }
+    };
+    if (ro) $("roOff").onclick = () => {
+      const n = prompt(`Allow changes on ${DEV.name}? This is a live device. Type its name to confirm:`);
+      if (n !== null) set(false, n);
+    };
+    else $("roOn").onclick = () => set(true, "");
+    if ($("applyBtn")) $("applyBtn").title = ro ? "This device is read-only" : "";
   }
   function setConnected(on, tab, wz) {
     show($("ws"), on); show($("discBtn"), on); show($("connCard"), !on);
@@ -349,7 +372,9 @@ document.addEventListener("DOMContentLoaded", () => {
       $("planNotes").innerHTML = PLAN.notes.map(n => `<div class="note warnbox">${esc(n)}</div>`).join("");
       $("planText").textContent = PLAN.text + (PLAN.commit ? "\n\n# then: commit / publish" : "");
       $("undoText").textContent = PLAN.undo.length ? PLAN.undo.map(s => `# ${s.title}\n${s.text}`).join("\n\n") : "No automatic undo for this change; restore the backup instead.";
-      $("applyOut").innerHTML = ""; show($("planBox"), true); $("applyBtn").disabled = false;
+      $("applyOut").innerHTML = DEV.read_only !== false
+        ? '<div class="note okbox" style="margin-top:10px">Read-only: this is what would be sent. Use <b>Allow changes…</b> at the top to apply it.</div>' : "";
+      show($("planBox"), true); $("applyBtn").disabled = DEV.read_only !== false;
       $("planBox").scrollIntoView({ behavior: "smooth", block: "start" });
     } catch (e) { $("wzErr").textContent = e.message; }
     finally { $("pvBtn").disabled = false; }

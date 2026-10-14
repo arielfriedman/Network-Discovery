@@ -11,12 +11,13 @@ CATALOG = {
         "label": "Fortinet FortiGate",
         "families": {
             "fortios": {
-                "label": "FortiGate (FortiOS 7.4 / 7.6)",
+                "label": "FortiGate (FortiOS 7.4 / 7.6 / 8.0)",
                 "api": "FortiOS REST API over HTTPS, API token",
                 "models": {
                     "FG-100F": {"ports": "mgmt, dmz, wan1, wan2, ha1, ha2, port1-port20, x1, x2"},
                     "FG-200E": {"ports": "mgmt, ha, wan1, wan2, port1-port18",
-                                "note": "End of sale Oct 2025, supported to Oct 2030. Replacement: FG-200G."},
+                                "note": "Still supported in FortiOS 8.0.1 (release notes, checked Oct 2026). "
+                                        "Newer model in the range: FG-200G."},
                 },
             },
         },

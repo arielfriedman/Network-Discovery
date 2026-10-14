@@ -97,7 +97,7 @@ def _J(v):
 
 # ── devices ──────────────────────────────────────────────────────────────────
 def list_devices() -> list[dict]:
-    rows = _q("""SELECT d.id, d.name, d.vendor, d.family, d.model, d.address, d.port, d.facts, d.last_seen,
+    rows = _q("""SELECT d.id, d.name, d.vendor, d.family, d.model, d.address, d.port, d.facts, d.last_seen, d.read_only,
                         d.pin IS NOT NULL AS pinned,
                         (SELECT max(taken_at) FROM config_backups b WHERE b.device_id = d.id) AS last_backup,
                         (SELECT count(*) FROM config_changes c WHERE c.device_id = d.id AND c.status = 'applied') AS changes
@@ -283,6 +283,27 @@ def _steps_json(steps: list[Step]) -> list[dict]:
     return [asdict(s) for s in steps]
 
 
+READ_ONLY_MSG = ("{name} is in read-only mode: the panel may read its configuration and take backups, "
+                 "but not change it. Switch read-only off on the device page first (you'll be asked to type its name).")
+
+
+def _require_writable(dev_id: int) -> dict:
+    d = get_device(dev_id)
+    if d.get("read_only", True):
+        raise DeviceError(READ_ONLY_MSG.format(name=d["name"]))
+    return d
+
+
+def set_read_only(dev_id: int, read_only: bool, confirm_name: str = "") -> dict:
+    """Switching read-only OFF needs the device's name typed back, so it can't happen by a stray click."""
+    d = get_device(dev_id)
+    if not read_only and confirm_name.strip() != d["name"]:
+        raise ValidationError(f"type the device name ({d['name']}) to allow changes on it")
+    _q("UPDATE devices SET read_only = %s WHERE id = %s", (bool(read_only), dev_id))
+    db.log("device.read_only.on" if read_only else "device.read_only.off", d["address"], {"device": d["name"]})
+    return {"id": dev_id, "read_only": bool(read_only)}
+
+
 def _steps_from(rows: list[dict]) -> list[Step]:
     return [Step(**r) for r in rows]
 
@@ -293,6 +314,12 @@ def apply(plan_id: str, skip_backup: bool = False) -> dict:
     if not pend:
         raise DeviceError("This preview has expired or was already applied. Preview it again.")
     dev_id, plan, w = pend["device"], pend["plan"], pend["wizard"]
+    try:
+        _require_writable(dev_id)
+    except DeviceError:
+        with LOCK:              # keep the preview, so it can be applied after switching
+            PENDING[plan_id] = pend
+        raise
     drv = session(dev_id)
     vendor_key = f"{drv.vendor}.{w.id}"
 
@@ -342,6 +369,7 @@ def rollback(change_id: int) -> dict:
         raise DeviceError("change not found")
     if ch["status"] == "rolled_back":
         raise DeviceError("this change was already rolled back")
+    _require_writable(ch["device_id"])
     if not ch.get("undo"):
         raise DeviceError("this change has no automatic undo; restore the backup taken before it instead")
     drv = session(ch["device_id"])
