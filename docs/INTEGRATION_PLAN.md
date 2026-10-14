@@ -8,8 +8,7 @@
 
 ## 0. Blocker: the SentinelScan engine is missing from the backup
 
-The backup on `424ACCF3.../PC backup/projects/vulnerability tool project/portable tool`
-contains the **14 scan modules** and the **3 reporters**, but **not** the engine
+The project backup on an external drive contained the **14 scan modules** and the **3 reporters**, but **not** the engine
 that runs them. Missing files, all imported by every module:
 
 | File | Defines | Why it's needed |
