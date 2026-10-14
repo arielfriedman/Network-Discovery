@@ -114,6 +114,14 @@ After connecting, "Run on" switches to that machine: the distro is read from its
   `GET /api/actions/targets`, `POST /api/actions/targets/{connect,disconnect,forget}`,
   `GET /api/actions?target=<id>`.
 
+## Running (changed 2026-10-14 after user feedback)
+
+One click on an action runs it; the Output shows each command as it runs.
+Dangerous actions (and all actions when "Show the commands before running" is
+ticked) show the exact commands first and need Run. `>_` types an action into the
+terminal. When connected to a machine, a green banner says where actions run, with
+"Open terminal there" and "Disconnect"; connecting opens a terminal there at once.
+
 ## Terminal (stage 4, built 2026-10-14)
 
 A **Terminal** tab next to Output on the Actions page. "Open terminal" starts a real

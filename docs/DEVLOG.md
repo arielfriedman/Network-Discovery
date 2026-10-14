@@ -32,6 +32,30 @@ Entry template:
 
 ---
 
+## 2026-10-14 - Actions: one-click run, clear "connected" state
+**Change:** (1) Clicking an action (the row or ▶) runs it at once; the Output shows
+each command as it runs. Dangerous actions still show the commands and ask first.
+"Show the commands before running" (remembered per browser) brings back the
+two-step flow for everything. A `>_` button on each action types it into the terminal.
+(2) After connecting to a machine: a green banner "Connected to user@host (name) ·
+distro · sudo" with "Open terminal there" and "Disconnect"; the Terminal tab opens a
+shell on that machine right away; the terminal's button says which machine it
+opens on, and offers "Switch terminal to …" when Run on changed. Output title shows
+where the action ran. Files: `panel/web/actions.html`, `style.css`.
+**Why (user feedback):** "why do I also need to click Run?" and "connect only gives
+'connected' without actually being connected or an option to run any command".
+**Cause of the second:** the activity log showed the SSH connect to 172.16.0.37 *did*
+work (22:56) and a local terminal had been opened (22:55). The page just didn't show
+it: the only change was the "Run on" dropdown, and the open terminal stayed on this
+machine. The terminal itself works in Brave (checked headless: draws and takes typing).
+**Verified (headless Brave, scripted clicks, test sshd):** one click runs a safe action
+with no confirm box; dangerous action shows the confirm box and doesn't run; connect →
+fingerprint confirm → banner shown, terminal tab opens a shell on the remote machine,
+typing runs there; clicking an action then runs on the remote (Output title shows it);
+Disconnect hides the banner, returns to this machine, closes that terminal; no JS errors.
+Screenshot checked.
+**Not verified:** by hand in the user's own browser.
+
 ## 2026-10-14 - Actions: interactive terminal (stage 4)
 **Change:** Terminal tab on the Actions page: a real shell on this machine or on a
 machine connected over SSH, drawn with xterm.js (vendored, `panel/web/vendor/xterm/`,

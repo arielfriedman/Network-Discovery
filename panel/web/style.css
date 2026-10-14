@@ -233,3 +233,8 @@ details.sys div{margin:3px 0 0 12px}
 .xt{height:460px;background:#0d1117;border-radius:var(--radius);padding:6px;overflow:hidden}
 .xt-note{font-size:12.5px;margin-top:6px}
 .xt .xterm-viewport{scrollbar-color:#30363d #0d1117;background-color:#0d1117}
+.conn-banner{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-top:10px;padding:10px 14px;border:1px solid var(--ok,#2da44e);border-radius:var(--radius);background:var(--surface-1);font-size:13.5px}
+.conn-banner .dot{width:10px;height:10px;border-radius:50%;background:var(--ok,#2da44e);flex:none}
+.tgt-bar .ask{margin-left:auto}
+.act{cursor:pointer}
+.act.na{cursor:default}

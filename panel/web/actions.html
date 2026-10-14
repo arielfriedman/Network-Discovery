@@ -17,8 +17,15 @@
   <div class="tgt-bar">
     <label>Run on <select id="tgtSel"><option value="">this machine</option></select></label>
     <button class="btn ghost" id="connBtn">Connect to a machine…</button>
-    <button class="btn ghost" id="discBtn" style="display:none">Disconnect</button>
-    <span id="tgtInfo" class="muted"></span>
+    <label class="chk ask"><input type="checkbox" id="askFirst"> Show the commands before running</label>
+  </div>
+  <div id="connBanner" class="conn-banner" style="display:none">
+    <span class="dot"></span>
+    <div><b>Connected to <span id="cbWho"></span></b> <span id="tgtInfo" class="muted"></span>
+      <div class="muted">The actions on the left now run there. Click one to run it, or open a terminal there.</div></div>
+    <span class="spacer"></span>
+    <button class="btn" id="cbTerm">Open terminal there</button>
+    <button class="btn ghost" id="cbDisc">Disconnect</button>
   </div>
 
   <div class="act-layout">
@@ -129,7 +136,7 @@ document.addEventListener("DOMContentLoaded", () => {
     $("distro").textContent = ` Detected on ${DATA.target}: ${DATA.distro.pretty}` + (DATA.distro.family ? ` (${DATA.distro.family} family).` : ".");
     $("restoreBtn").style.display = DATA.hidden_builtins ? "" : "none";
     $("folderList").innerHTML = DATA.folders.map(f => `<option value="${esc(f.name)}">`).join("");
-    render(); loadRuns();
+    render(); loadRuns(); xtBtn();
   }
 
   function render() {
@@ -143,16 +150,21 @@ document.addEventListener("DOMContentLoaded", () => {
       return `<details class="fold" ${isOpen ? "open" : ""} data-fold="${esc(g.name)}"><summary>${esc(g.name)} <span class="muted">${items.length}</span></summary>` +
         items.map(a => `<div class="act ${a.available ? "" : "na"}" draggable="true" data-id="${a.id}"
             title="${esc(a.steps.map(s => s.here || "(not available here)").join("\n"))}">
-          <button class="act-run" data-run="${a.id}" ${a.available ? "" : "disabled"}>▶</button>
+          <button class="act-run" data-run="${a.id}" ${a.available ? "" : "disabled"} title="Run">▶</button>
           <span class="act-name">${esc(a.name)}</span>
           ${a.dangerous ? '<span class="badge new">dangerous</span>' : ""}
           ${a.steps.length > 1 ? `<span class="muted">${a.steps.length} steps</span>` : ""}
+          <button class="act-edit" data-type="${a.id}" ${a.available ? "" : "disabled"} title="Type into the terminal (to answer prompts yourself)">&gt;_</button>
           <button class="act-edit" data-edit="${a.id}" title="Edit">✎</button></div>`).join("") + `</details>`;
     }).join("") || '<div class="empty">No action matches.</div>';
     document.querySelectorAll(".fold").forEach(d => d.addEventListener("toggle", () => {
       open[d.dataset.fold] = d.open; try { localStorage.setItem("sentinel-act-open", JSON.stringify(open)); } catch (e) {}
     }));
-    document.querySelectorAll("[data-run]").forEach(b => b.onclick = () => prepare(+b.dataset.run));
+    document.querySelectorAll(".act").forEach(el => el.onclick = e => {
+      if (e.target.closest("[data-edit],[data-type]")) return;
+      const a = byId(+el.dataset.id); if (a.available) runAction(a.id);
+    });
+    document.querySelectorAll("[data-type]").forEach(b => b.onclick = () => typeInto(byId(+b.dataset.type)));
     document.querySelectorAll("[data-edit]").forEach(b => b.onclick = () => edit(+b.dataset.edit));
     document.querySelectorAll(".act").forEach(el => {
       el.addEventListener("dragstart", e => { dragId = +el.dataset.id; e.dataTransfer.setData("text/plain", el.dataset.id); el.classList.add("dragging"); });
@@ -165,9 +177,37 @@ document.addEventListener("DOMContentLoaded", () => {
   $("find").oninput = render;
   const byId = id => DATA.actions.find(a => a.id === id);
 
-  // ── run: show exact commands, then confirm ───────────────────────────────
+  // ── run: one click; dangerous actions (or "show commands first") confirm ──
+  let ASK = false;
+  try { ASK = localStorage.getItem("sentinel-act-ask") === "1"; } catch (e) {}
+  $("askFirst").checked = ASK;
+  $("askFirst").onchange = () => { ASK = $("askFirst").checked; try { localStorage.setItem("sentinel-act-ask", ASK ? "1" : "0"); } catch (e) {} };
+  function runAction(id) {
+    const a = byId(id);
+    if (a.dangerous || ASK) return prepare(id);
+    doRun(a, false);
+  }
+  async function doRun(a, dangerOk) {
+    showTab("out");
+    $("termTitle").textContent = `${a.name} · ${DATA.target}`;
+    $("confirmBox").style.display = "none";
+    let r;
+    try { r = await api("/api/actions/run", { id: a.id, confirm_dangerous: dangerOk, target: TARGET }); }
+    catch (e) { $("term").textContent = `Could not run "${a.name}": ${e.message}\n`; return; }
+    runId = r.run_id; offset = 0; $("term").textContent = ""; poll();
+  }
+  async function typeInto(a) {
+    const steps = a.steps.map(s => s.here).filter(Boolean);
+    if (a.dangerous && !confirm(`"${a.name}" is marked dangerous. Type its commands into the terminal on ${DATA.target}?`)) return;
+    showTab("term");
+    if (SID && SWHERE !== TARGET) await xtClose();
+    if (!SID && !(await xtOpen())) return;
+    await sendInput(steps.map(c => c + "\r").join(""));
+    XT.focus();
+  }
   function prepare(id) {
     const a = byId(id), steps = a.steps.map(s => s.here).filter(Boolean);
+    showTab("out");
     $("termTitle").textContent = a.name;
     $("confirmBox").style.display = "block";
     $("confirmBox").innerHTML = `<div><b>About to run on ${esc(DATA.target)} (${esc(DATA.distro.pretty)}):</b></div>
@@ -178,26 +218,9 @@ document.addEventListener("DOMContentLoaded", () => {
       <button class="btn ghost" id="noBtn">Cancel</button>
       <span class="muted">${a.stop_on_error ? "Stops at the first failing command." : "Runs every command even if one fails."}</span></div>`;
     $("noBtn").onclick = () => { $("confirmBox").style.display = "none"; };
-    $("typeBtn").onclick = async () => {
-      if (a.dangerous && !$("dangerOk").checked) { alert("Tick the box to confirm."); return; }
-      $("confirmBox").style.display = "none";
-      showTab("term");
-      if (SID && SWHERE !== TARGET) {
-        if (!confirm(`The terminal is open on ${$("xtWhere").textContent}. Close it and open one on ${DATA.target}?`)) return;
-        await xtClose();
-      }
-      if (!SID && !(await xtOpen())) return;
-      await sendInput(steps.map(c => c + "\r").join(""));
-      XT.focus();
-    };
-    $("goBtn").onclick = async () => {
-      if (a.dangerous && !$("dangerOk").checked) { alert("Tick the box to confirm."); return; }
-      let r;
-      try { r = await api("/api/actions/run", { id, confirm_dangerous: a.dangerous, target: TARGET }); }
-      catch (e) { $("confirmBox").insertAdjacentHTML("beforeend", `<div class="bad-text">${esc(e.message)}</div>`); return; }
-      $("confirmBox").style.display = "none";
-      runId = r.run_id; offset = 0; $("term").textContent = ""; poll();
-    };
+    const ok = () => { if (a.dangerous && !$("dangerOk").checked) { alert("Tick the box to confirm."); return false; } return true; };
+    $("typeBtn").onclick = () => { if (!ok()) return; $("confirmBox").style.display = "none"; typeInto(Object.assign({}, a, { dangerous: false })); };
+    $("goBtn").onclick = () => { if (ok()) doRun(a, a.dangerous); };
   }
   async function poll() {
     clearTimeout(pollT);
@@ -244,13 +267,18 @@ document.addEventListener("DOMContentLoaded", () => {
     XT.onData(d => { if (SID) sendInput(d); });
     XT.onResize(({ cols, rows }) => { if (SID) api(`/api/term/${SID}/resize`, { cols, rows }).catch(() => {}); });
     new ResizeObserver(() => { try { FIT.fit(); } catch (e) {} }).observe($("xt"));
-    XT.write("Click \u201cOpen terminal\u201d to start a shell.\r\n");
+    XT.write("Click \u201cOpen terminal\u201d above to start a shell.\r\n");
   }
   const sendInput = d => (inQ = inQ.then(() => api(`/api/term/${SID}/write`, { data: d })
     .catch(e => XT.write(`\r\n[${e.message}]\r\n`))));
-  function xtUi(state) {
-    $("xtOpen").style.display = SID ? "none" : "";
+  function xtBtn() {
+    const here = DATA ? DATA.target : "this machine", other = SID && SWHERE !== TARGET;
+    $("xtOpen").textContent = other ? `Switch terminal to ${here}` : `Open terminal on ${here}`;
+    $("xtOpen").style.display = SID && !other ? "none" : "";
     $("xtClose").style.display = SID ? "" : "none";
+  }
+  function xtUi(state) {
+    xtBtn();
     const p = $("xtState"); p.style.display = state ? "" : "none";
     p.className = "pill " + (state === "connected" ? "ok" : "bad"); p.lastChild.textContent = state || "";
   }
@@ -282,7 +310,7 @@ document.addEventListener("DOMContentLoaded", () => {
   }
   function ended() { SID = null; try { sessionStorage.removeItem("sentinel-term"); } catch (e) {} xtUi("closed"); }
   async function xtClose() { const sid = SID; ended(); if (sid) await api(`/api/term/${sid}/close`, {}).catch(() => {}); }
-  $("xtOpen").onclick = xtOpen;
+  $("xtOpen").onclick = async () => { if (SID) await xtClose(); xtOpen(); };
   $("xtClose").onclick = async () => { await xtClose(); XT.write("\r\n[closed]\r\n"); };
   (async () => {                                   // after a page reload: re-attach to the open terminal
     let saved; try { saved = JSON.parse(sessionStorage.getItem("sentinel-term") || "null"); } catch (e) {}
@@ -302,8 +330,13 @@ document.addEventListener("DOMContentLoaded", () => {
       `<option value="${t.id}">${esc(t.user)}@${esc(t.host)}${t.port !== 22 ? ":" + t.port : ""} (${esc(t.hostname || "")})</option>`).join("");
     $("tgtSel").value = TARGET;
     const t = OPEN.find(x => x.id === TARGET);
-    $("discBtn").style.display = t ? "" : "none";
-    $("tgtInfo").textContent = t ? `${t.distro.pretty} · host key ${t.fingerprint}` + (t.sudo ? " · sudo password set" : " · no sudo password") : "";
+    $("connBanner").style.display = t ? "" : "none";
+    $("connBtn").textContent = OPEN.length ? "Connect to another machine…" : "Connect to a machine…";
+    if (t) {
+      $("cbWho").textContent = `${t.user}@${t.host}${t.port !== 22 ? ":" + t.port : ""}` + (t.hostname ? ` (${t.hostname})` : "");
+      $("tgtInfo").textContent = `· ${t.distro.pretty} · ` + (t.sudo ? "sudo password set" : "no sudo password");
+      $("tgtInfo").title = `SSH host key ${t.fingerprint}`;
+    }
     const seen = new Set();
     $("hostList").innerHTML = [...r.previous.map(p => ({ v: p.host, l: `${p.username}@${p.host} (used before)`, u: p.username, port: p.port })),
                                ...r.scanned.map(s => ({ v: s.host, l: [s.hostname, s.device_type, s.os_guess].filter(Boolean).join(" · ") || "SSH open in a scan" }))]
@@ -312,7 +345,11 @@ document.addEventListener("DOMContentLoaded", () => {
   }
   let PREV = [];
   $("tgtSel").onchange = () => { TARGET = $("tgtSel").value; $("confirmBox").style.display = "none"; loadTargets(); load(); };
-  $("discBtn").onclick = async () => { await api("/api/actions/targets/disconnect", { id: TARGET }).catch(() => {}); TARGET = ""; loadTargets(); load(); };
+  $("cbDisc").onclick = async () => {
+    if (SID && SWHERE === TARGET) await xtClose();
+    await api("/api/actions/targets/disconnect", { id: TARGET }).catch(() => {}); TARGET = ""; await loadTargets(); load();
+  };
+  $("cbTerm").onclick = async () => { showTab("term"); if (SID && SWHERE === TARGET) { XT.focus(); return; } if (SID) await xtClose(); xtOpen(); };
 
   const authRows = () => {
     const a = $("kAuth").value, pw = a === "password";
@@ -343,7 +380,8 @@ document.addEventListener("DOMContentLoaded", () => {
     try {
       const t = await api("/api/actions/targets/connect", body);
       clearSecrets(); $("connModal").style.display = "none";
-      TARGET = t.id; await loadTargets(); load();
+      TARGET = t.id; await loadTargets(); await load();
+      showTab("term"); if (SID) await xtClose(); xtOpen();
     } catch (e) {
       if (e.data && e.data.needs_trust) {
         trust = e.data.needs_trust;
