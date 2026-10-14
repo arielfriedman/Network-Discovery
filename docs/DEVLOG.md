@@ -32,6 +32,15 @@ Entry template:
 
 ---
 
+## 2026-10-14 - Pre-public cleanup: backup-drive path removed (38e37f4)
+**Change:** `docs/INTEGRATION_PLAN.md` no longer names the backup drive's
+folder path. **Still to do before going public:** the path remains in older
+commits; remove it in the same history rewrite as the commit e-mail.
+**Also decided:** a fix for deep scans waiting on the sudo keepalive loop
+(plain `wait` in `stage_deep`) was written and then dropped at the user's
+request; not committed. Symptom if it recurs: a sudo deep scan stays at
+"waiting for the last N scan job(s)" after nmap has finished.
+
 ## 2026-10-14 - Device read-only mode; FortiGate facts for production use (ddb0a8b)
 **Change:** devices are **read-only by default** (migration
 `009_device_read_only.sql`, also for devices already added): connect,
