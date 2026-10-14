@@ -6,13 +6,19 @@
 # what an SSH login collects (read-only commands)
 SSH_REMOTE_CMD='
     echo "=== uname ==="; uname -a
-    echo "=== os ==="; cat /etc/os-release 2>/dev/null | head -n 4
+    echo "=== os ==="; grep -E "^(PRETTY_NAME|NAME|VERSION_ID|ID|ID_LIKE)=" /etc/os-release 2>/dev/null
     echo "=== uptime ==="; uptime
     echo "=== addresses ==="; ip -br addr 2>/dev/null || ifconfig -a 2>/dev/null
     echo "=== listening ==="; (ss -tulpn 2>/dev/null || netstat -tulpn 2>/dev/null) | head -n 40
     echo "=== disk ==="; df -h --output=source,size,pcent,target 2>/dev/null | head -n 12
-    echo "=== containers ==="; (docker ps --format "{{.Names}}\t{{.Image}}\t{{.Status}}" 2>/dev/null || echo "no docker")
-    echo "=== model ==="; (tr -d "\000" < /proc/device-tree/model 2>/dev/null; echo) | head -n 1
+    echo "=== containers ==="; (docker ps -a --format "{{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}" 2>/dev/null || echo "no docker")
+    echo "=== model ==="; (tr -d "\000" 2>/dev/null </proc/device-tree/model; echo) | head -n 1
+    echo "=== cpu ==="; echo "$(nproc 2>/dev/null) cores, $(uname -m)"
+    echo "=== memory ==="; free -h 2>/dev/null | awk "/^Mem:/{print \$2\" total, \"\$7\" available\"}"
+    echo "=== services ==="; systemctl list-units --type=service --state=running --no-legend --plain 2>/dev/null | awk "{print \$1}" | head -n 80
+    echo "=== kubernetes ==="; k=""; for c in kubectl k3s microk8s kubeadm; do command -v $c >/dev/null && k="$k $c"; done
+      for s in k3s k3s-agent kubelet snap.microk8s.daemon-kubelite containerd; do systemctl is-active --quiet $s 2>/dev/null && k="$k $s(running)"; done
+      echo "${k:-none}"
 '
 
 stage_auth() {

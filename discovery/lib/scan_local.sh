@@ -278,6 +278,9 @@ stage_deep() {
   ok "deep scan complete ($(ls -1 "$RAW/hosts"/*.txt 2>/dev/null | wc -l) host reports)"
 
   extract_services
+  # page titles for web apps nmap didn't recognise (lib/http_probe.py, one GET per port)
+  run_tool "web page titles" "$RAW/30-http-titles.txt" \
+    python3 "$BASE_DIR/lib/http_probe.py" "$RAW/hosts" "$WORK/http.json" || true
 }
 
 # Flatten nmap output into ip<TAB>port/proto<TAB>service<TAB>version

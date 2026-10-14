@@ -59,19 +59,69 @@ def is_local_mac(mac: str | None) -> bool:
     return bool(mac) and re.match(r"^[0-9a-fA-F]([26aeAE])", mac) is not None
 
 
+# (type, field, regex, strength, evidence text). Fields: vendor, model, os,
+# banner (service product/version), names (host / mDNS / NetBIOS names),
+# mdns (announced service types), ssdp, ports (" 22 80 9100 "), apps, role.
+# A vendor that also makes ordinary PCs or phones (HP, Samsung, Sony) is only
+# "low" on its own; it takes a second clue to be sure.
 RULES = [
-    # (type, field, regex, strength, evidence text)
     ("Raspberry Pi", "vendor", r"raspberry\s*pi", "high", "MAC address registered to Raspberry Pi"),
     ("Raspberry Pi", "model", r"raspberry\s*pi", "high", "board model read over SSH"),
     ("Raspberry Pi", "os", r"raspbian|raspberry", "medium", "OS fingerprint"),
     ("Raspberry Pi", "banner", r"raspbian|raspberry", "medium", "service banner"),
     # (not "pi-hole": it runs on any Linux box)
     ("Raspberry Pi", "names", r"(^|[^a-z])(raspberry\s*pi|raspberrypi|rpi\d*)([^a-z]|$)", "low", "host name"),
+
+    ("Router / Wi-Fi", "role", r"gateway", "high", "it is this network's default gateway"),
+    ("Router / Wi-Fi", "vendor", r"ubiquiti|mikrotik|routerboard|netgear|zyxel|ruckus|aruba|meraki|cambium|draytek|avm gmbh|technicolor|sagemcom|arris", "medium", "network equipment maker"),
+    ("Router / Wi-Fi", "vendor", r"tp-link|asustek|d-link|linksys|tenda|huawei", "low", "maker of routers (and other devices)"),
+    ("Router / Wi-Fi", "ssdp", r"internetgatewaydevice|miniupnpd|asuswrt|openwrt|fritz!box", "high", "UPnP router announcement"),
+    ("Router / Wi-Fi", "apps", r"unifi network", "medium", "router / controller app"),
+
+    ("Printer", "mdns", r"_ipp|_ipps|_printer|_pdl-datastream|_scanner", "high", "announces a printing service (mDNS)"),
+    ("Printer", "ports", r" (9100|515) ", "medium", "printer port (9100 raw / 515 LPD)"),
+    ("Printer", "vendor", r"brother|seiko epson|canon|lexmark|kyocera|xerox|ricoh|konica|oki data|zebra|sharp corp", "medium", "printer maker"),
+    ("Printer", "vendor", r"hewlett|\bhp\b", "low", "HP (makes printers and PCs)"),
+    ("Printer", "names", r"printer|laserjet|officejet|deskjet|pixma|ecotank|mfc-|brn[0-9a-f]{6}", "medium", "printer-style name"),
+
+    ("IP camera", "vendor", r"hikvision|dahua|axis comm|reolink|amcrest|uniview|zhejiang uniview|hanwha|vivotek|foscam|wyze|arlo|eufy", "high", "camera maker"),
+    ("IP camera", "ports", r" 554 ", "medium", "RTSP video stream port"),
+    ("IP camera", "names", r"camera|\bcam\d*\b|ipc-|nvr|dvr", "low", "camera-style name"),
+
+    ("NAS / storage", "vendor", r"synology|qnap|asustor|terramaster|buffalo|drobo|western digital", "high", "NAS maker"),
+    ("NAS / storage", "apps", r"synology dsm|truenas", "high", "NAS operating system"),
+    ("NAS / storage", "names", r"\bnas\b|diskstation|truenas|unraid|openmediavault", "medium", "NAS-style name"),
+
+    ("TV / streamer", "mdns", r"_googlecast", "high", "Chromecast / Google TV announcement"),
+    ("TV / streamer", "ssdp", r"samsung|webos|lge|roku|sony.*bravia|mediarenderer|dial-multiscreen", "medium", "smart TV / DLNA announcement"),
+    ("TV / streamer", "vendor", r"roku|tcl|hisense|vizio|amlogic", "medium", "TV / streamer maker"),
+    ("TV / streamer", "names", r"\btv\b|television|living room|bravia|chromecast|fire ?tv|apple ?tv|shield", "medium", "TV-style name"),
+
+    ("Game console", "vendor", r"sony interactive|nintendo", "high", "game console maker"),
+    ("Game console", "names", r"playstation|\bps[345]\b|xbox|nintendo", "medium", "console name"),
+
+    ("Smart home / IoT", "vendor", r"espressif|tuya|shelly|allterco|itead|signify|philips lighting|lifx|ring llc|nest labs|ecobee|sonos|wiz connected|xiaomi|yeelink|govee|meross|tado|netatmo|ezviz", "medium", "smart-home / IoT chip or brand"),
+    ("Smart home / IoT", "mdns", r"_hap\._tcp|_homekit|_matter|_esphomelib|_shelly|_sonos|_hue", "high", "smart-home service announcement (HomeKit / Matter / ESPHome)"),
+    ("Smart home / IoT", "vendor", r"amazon technologies", "medium", "Amazon device (Echo / Fire / Ring)"),
+    ("Smart home / IoT", "apps", r"home assistant|node-red|mosquitto", "medium", "smart-home hub software"),
+
+    ("Apple device", "vendor", r"\bapple\b", "medium", "MAC address registered to Apple"),
+    ("Apple device", "mdns", r"_airplay|_companion-link|_apple-mobdev|_raop|_device-info.*(macbook|imac|iphone|ipad)", "medium", "Apple service announcement"),
+
+    ("Phone / tablet", "names", r"iphone|ipad|android|galaxy|pixel|oneplus|redmi|xiaomi|huawei-p|sm-[a-z]\d", "medium", "phone-style name"),
+    ("Phone / tablet", "random", r"yes", "low", "randomised MAC address (typical for phones)"),
+
+    ("Windows PC / server", "os", r"windows", "high", "Windows identified"),
+    ("Windows PC / server", "ports", r" 3389 ", "medium", "Remote Desktop port"),
+    ("Windows PC / server", "ports", r" 135 .* 445 | 445 .* 135 ", "medium", "Windows RPC + file sharing ports"),
+
+    ("Linux server", "os", r"ubuntu|debian|centos|red hat|rocky|alma|fedora|suse|arch|linux", "low", "Linux OS"),
+    ("Linux server", "ports", r" 22 ", "low", "SSH server"),
 ]
 RANK = {"high": 3, "medium": 2, "low": 1}
 
 
-def classify(h: dict, ssh_text: str = "") -> None:
+def classify(h: dict, ssh_text: str = "", gateway: str | None = None) -> None:
     """Adds device_type / device_model / device_confidence / device_evidence to host h."""
     model = None
     m = re.search(r"=== model ===\s*\n([^\n=]+)", ssh_text or "")
@@ -83,17 +133,36 @@ def classify(h: dict, ssh_text: str = "") -> None:
         "os": h.get("os") or "",
         "banner": " ".join(f"{p.get('service') or ''} {p.get('version') or ''}" for p in h.get("ports") or []),
         "names": " ".join(x for x in (h.get("hostname"), h.get("mdns"), h.get("netbios")) if x).lower(),
+        "mdns": h.get("mdns") or "",
+        "ssdp": h.get("ssdp") or "",
+        "ports": " " + " ".join(str(p.get("port", "")).split("/")[0] for p in h.get("ports") or []) + " ",
+        "apps": " | ".join(a.get("name", "") for a in h.get("apps") or []),
+        "role": "gateway" if gateway and h.get("ip") == gateway else "",
+        "random": "yes" if h.get("mac_random") else "",
     }
     found: dict[str, list[tuple[str, str]]] = {}
     for dtype, field, rx, strength, text in RULES:
         if fields[field] and re.search(rx, fields[field], re.I):
-            found.setdefault(dtype, []).append((strength, f"{text}: {fields[field][:80]}"))
+            detail = "" if field in ("role", "random", "ports") else f": {fields[field].strip()[:80]}"
+            found.setdefault(dtype, []).append((strength, text + detail))
     if not found:
         return
-    best = max(found, key=lambda t: max(RANK[s] for s, _ in found[t]))
+    # strongest single clue wins; more clues break ties. Two independent
+    # medium clues count as high; a type resting on low clues only stays low.
+    def score(t):
+        ranks = sorted((RANK[s] for s, _ in found[t]), reverse=True)
+        return (ranks[0], len(ranks))
+    # "Linux server" is a fallback: any specific type beats it
+    specific = [t for t in found if t != "Linux server"]
+    best = max(specific or found, key=score)
     ev = sorted(found[best], key=lambda e: -RANK[e[0]])
+    conf = ev[0][0]
+    if conf == "medium" and sum(1 for s, _ in ev if s == "medium") >= 2:
+        conf = "high"
+    if best == "Linux server" and len(ev) >= 2 and conf == "low":
+        conf = "medium"
     h["device_type"] = best
-    h["device_confidence"] = ev[0][0]
+    h["device_confidence"] = conf
     h["device_evidence"] = [e for _, e in ev]
     if model:
         h["device_model"] = model

@@ -67,7 +67,7 @@ document.addEventListener("DOMContentLoaded",function(){
     if(scope==="host") return [["mode","Mode",[["workstation","Workstation (this PC / laptop)"],["server","Server (hosts services)"]]],
                                ["scan_type","Depth",[["quick","Quick"],["full","Full (all ports, slower)"]]]];
     return [["provider","Provider",Object.keys(PROV).map(k=>
-      [k, PROV[k]+(CLI_PROV.includes(k)&&ENV&&!ENV.clouds[k]?" (CLI not installed)":!CLI_PROV.includes(k)&&k!=="all"?" (API, needs a card)":"")])]];
+      [k, PROV[k]+(CLI_PROV.includes(k)&&ENV&&!ENV.clouds[k]?" (CLI not installed)":!CLI_PROV.includes(k)&&k!=="all"?" (add an API token below)":"")])]];
   }
   // ── network: targets + checklist ──────────────────────────────────────────
   const NET={mode:"network", typed:"", files:[], parsed:null, opts:{names:true,ports:"off",vuln:false,wan:true,pn:false,logins:false}, wanTouched:false};
@@ -114,10 +114,13 @@ document.addEventListener("DOMContentLoaded",function(){
     $("tmode").querySelectorAll("button").forEach(b=>b.onclick=()=>{
       NET.mode=b.dataset.m;
       if(!NET.wanTouched) NET.opts.wan = NET.mode!=="targets";
+      // a few named hosts: port scan them by default (it's what makes the report useful)
+      if(!NET.portsTouched) NET.opts.ports = NET.mode==="targets" ? "top" : "off";
       renderNetwork(); renderReady(); });
     $("opts").querySelectorAll("[data-o]").forEach(el=>el.onchange=()=>{
       const k=el.dataset.o; NET.opts[k]= el.type==="checkbox"?el.checked:el.value;
       if(k==="wan") NET.wanTouched=true;
+      if(k==="ports") NET.portsTouched=true;
       if(k==="ports"&&el.value==="off") NET.opts.vuln=false;
       renderNetwork(); });
     const ta=$("tlist"); let tmr=null;

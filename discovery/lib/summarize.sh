@@ -12,7 +12,7 @@ build_json() {
   CLOUDDIR="$RAW/cloud" AWSOPEN="$WORK/aws-open-sgs.tsv" \
   META_CIDR="$TARGET_CIDR" META_IFACE="$IFACE" META_GW="$GATEWAY" \
   META_START="$RUN_START_ISO" META_ID="$RUN_ID" META_SELF="$SELF_IP" \
-  TARGETS="${TARGETS_FILE:+$WORK/targets.tsv}" CREDUSE="$WORK/cred-use.tsv" SSHDIR="$RAW/ssh" \
+  TARGETS="${TARGETS_FILE:+$WORK/targets.tsv}" CREDUSE="$WORK/cred-use.tsv" SSHDIR="$RAW/ssh" HOSTSDIR="$RAW/hosts" HTTPJSON="$WORK/http.json" \
   python3 "$BASE_DIR/lib/build_json.py" >"$RUN_DIR/findings.json"
   ok "findings.json written"
 }
@@ -73,7 +73,16 @@ for h in d["hosts"]:
     if len(h["ports"]) > 12: ports += f" (+{len(h['ports'])-12} more)"
     print(f"\n  {h['ip']:<16} {h.get('hostname') or '-'}")
     if h.get("mac"):    print(f"    mac      {h['mac']}  {h.get('vendor') or ''}".rstrip())
-    if h.get("os"):     print(f"    os       {h['os']}")
+    if h.get("os"):     print(f"    os       {h['os']}" + (f"  (from {h['os_source']})" if h.get("os_source") else ""))
+    for a in h.get("apps", [])[:12]:
+        print(f"    app      {a['name']} on {a['port']}  [{a['evidence']}]")
+    sy = h.get("system") or {}
+    for k in ("os_release", "kernel", "model", "cpu", "memory"):
+        if sy.get(k): print(f"    {k:<8} {sy[k]}")
+    if sy.get("docker"):
+        print(f"    docker   {len(sy['docker'])} container(s): " + ", ".join(f"{c['name']} ({c['image']}, {c['status'].split(' ')[0]})" for c in sy["docker"][:8]))
+    if sy.get("kubernetes"): print(f"    k8s      {' '.join(sy['kubernetes'])}")
+    if sy.get("services"): print(f"    services {len(sy['services'])} running: " + ", ".join(sy["services"][:15]) + (" ..." if len(sy["services"]) > 15 else ""))
     if h.get("device_type"):
         print(f"    type     {h['device_type']}" + (f" - {h['device_model']}" if h.get("device_model") else "")
               + f" ({h['device_confidence']}: {'; '.join(h['device_evidence'])[:120]})")

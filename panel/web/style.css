@@ -179,3 +179,7 @@ details.f pre{white-space:pre-wrap;font:12.5px/1.5 ui-monospace,Menlo,Consolas,m
 .bkbox .chk{display:flex;align-items:center;gap:7px}
 .bkbox .chk input{min-width:0;width:16px;height:16px;padding:0}
 .bkbox code{font-size:11.5px;word-break:break-all}
+
+details.sys{margin-top:6px;font-size:12.5px}
+details.sys summary{cursor:pointer;color:var(--series-1)}
+details.sys div{margin:3px 0 0 12px}

@@ -363,7 +363,8 @@ def save_network_scan(data: dict, kind: str = "network", status: str = "complete
             if not ip or not re.match(r"^[0-9a-fA-F:.]+$", ip):
                 continue
             mac = h.get("mac") if h.get("mac") and re.match(r"^([0-9a-fA-F]{2}[:-]){5}[0-9a-fA-F]{2}$", h["mac"]) else None
-            extra = {k: h.get(k) for k in ("mdns", "netbios", "ssdp") if h.get(k)}
+            extra = {k: h.get(k) for k in ("mdns", "netbios", "ssdp", "apps", "system", "os_source",
+                                            "os_confidence", "mac_random") if h.get(k)}
             conf = h.get("device_confidence") if h.get("device_confidence") in ("high", "medium", "low") else None
             cur.execute("""INSERT INTO hosts (scan_id, ip, mac, hostname, vendor, os_guess, extra,
                                               device_type, device_model, device_confidence, device_evidence)
@@ -416,7 +417,7 @@ def get_scan(ref: str) -> dict | None:
                     (sid,))
         findings = cur.fetchall()
         cur.execute("""SELECT host(h.ip) AS ip, h.mac::text AS mac, h.hostname, h.vendor, h.os_guess,
-                              h.device_type, h.device_model, h.device_confidence, h.device_evidence,
+                              h.device_type, h.device_model, h.device_confidence, h.device_evidence, h.extra,
                               coalesce(json_agg(json_build_object('port', s.port, 'protocol', s.protocol,
                                        'service', s.service, 'version', s.version) ORDER BY s.port)
                                        FILTER (WHERE s.port IS NOT NULL), '[]') AS services

@@ -78,6 +78,26 @@ work/              intermediate tables
 `reports/latest` always points at the newest run. Old runs beyond `KEEP_RUNS`
 (default 20) are pruned automatically.
 
+## Host profiles: OS, apps, system details
+
+After the port scan each host gets a profile (`lib/host_profile.py`):
+
+- **OS** with the clue it came from: nmap's OS fingerprint (needs root), else
+  service banners - e.g. `OpenSSH 9.6p1 Ubuntu 3ubuntu13` is Ubuntu 24.04,
+  `+deb12u` is Debian 12, RDP/SMB build numbers name the Windows version -
+  or `/etc/os-release` when an SSH login card works.
+- **Apps**: known software by page title / server / product (Uptime Kuma,
+  Grafana, Home Assistant, Pi-hole, Portainer, Nextcloud, Jellyfin, Plex,
+  databases, ...); other web apps by their page title. `lib/http_probe.py`
+  reads titles on ports nmap didn't recognise as web (one plain GET each).
+  Matches resting only on the usual port are marked "(likely)".
+- **Containers from the network**: Docker API (2375/2376, an open 2375 is
+  flagged), Kubernetes API (6443/16443), kubelet (10250), etcd (2379).
+- **System details** (SSH login card only): OS release, kernel, hardware
+  model, CPU / RAM, uptime, running systemd services, Docker containers
+  (`docker ps -a`), Kubernetes (k3s / microk8s / kubelet / containerd).
+  Docker and Kubernetes that don't expose ports can only be seen this way.
+
 ## Device types (Raspberry Pi, ...)
 
 Every network scan labels hosts it can identify, with the evidence and a
@@ -90,7 +110,11 @@ confidence (`discovery/lib/device_types.py`):
 | OS fingerprint or service banner naming it | medium |
 | only the host / mDNS name (`raspberrypi`, `rpi4-...`) | low |
 
-Raspberry Pi is the first type; more are added as rules in the same file.
+Types: Raspberry Pi, router / Wi-Fi, printer, IP camera, NAS / storage,
+TV / streamer, game console, smart home / IoT, Apple device, phone / tablet,
+Windows PC / server, Linux server (fallback). Two independent medium clues
+count as high; a vendor that also makes ordinary PCs or phones (HP, Samsung)
+counts only as low on its own. More types are added as rules in the same file.
 MAC vendors come from `config/ieee-oui.csv`, fetched from the IEEE by
 `./update-vendors.sh` (the installer runs it; refresh every few months),
 falling back to the older copies shipped with arp-scan and nmap. Devices

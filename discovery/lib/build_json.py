@@ -86,6 +86,15 @@ for h in hosts.values():
 # no vendor: look it up in the local IEEE data. Then classify device types.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import device_types  # noqa: E402
+import host_profile  # noqa: E402
+profile_findings = []
+http_pages = {}
+if env("HTTPJSON") and os.path.exists(env("HTTPJSON")):
+    try:
+        for r in json.load(open(env("HTTPJSON"))):
+            http_pages.setdefault(r["ip"], {})[int(r["port"])] = r
+    except (ValueError, KeyError, TypeError):
+        pass
 for h in hosts.values():
     if h["mac"] and not h["vendor"]:
         if device_types.is_local_mac(h["mac"]):
@@ -97,7 +106,10 @@ for h in hosts.values():
         f = os.path.join(env("SSHDIR"), h["ip"].replace(".", "_") + ".txt")
         if os.path.exists(f):
             ssh_text = open(f, encoding="utf-8", errors="replace").read()
-    device_types.classify(h, ssh_text)
+    xml = os.path.join(env("HOSTSDIR") or "", h["ip"].replace(".", "_") + ".xml") if env("HOSTSDIR") else None
+    host_profile.build(h, xml, ssh_text, http_pages.get(h["ip"], {}))        # os (with its source), apps, system, findings
+    profile_findings += h.pop("profile_findings", [])
+    device_types.classify(h, ssh_text, env("META_GW"))
 
 # ---------------------------------------------------------------- cloud
 cloud, cloud_total = {}, 0
@@ -231,6 +243,14 @@ if failed:
                             + ", ".join(f"{c['name']} on {c['host']}" for c in failed[:4])
                             + (" ..." if len(failed) > 4 else "")})
 
+# ---------------------------------------------------------------- host profiles
+listed_ips = set(hosts)
+for f in profile_findings:
+    if f["text"].split(":")[0] in listed_ips:
+        notable.append(f)
+app_counts = collections.Counter(a["name"] for h in hosts.values() for a in h.get("apps", [])
+                                 if a["category"] != "web app")
+
 # ---------------------------------------------------------------- device types
 type_counts = collections.Counter(h["device_type"] for h in hosts.values() if h.get("device_type"))
 pis = [h for h in hosts.values() if h.get("device_type") == "Raspberry Pi"]
@@ -268,6 +288,7 @@ out = {
     "vendors": [{"label": k, "count": v} for k, v in vendor_counts.most_common(10)],
     "os_families": [{"label": k, "count": v} for k, v in os_counts.most_common(8)],
     "device_types": [{"label": k, "count": v} for k, v in type_counts.most_common()],
+    "apps": [{"label": k, "count": v} for k, v in app_counts.most_common(15)],
     "cloud": cloud,
     "notable": notable,
     "targets": targets,

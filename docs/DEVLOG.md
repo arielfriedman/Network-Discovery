@@ -32,6 +32,63 @@ Entry template:
 
 ---
 
+## 2026-10-14 - Host profiles (OS, apps, system) and more device types
+**Change:**
+- `discovery/lib/host_profile.py`: reads nmap XML per host; OS from banners
+  (Ubuntu by OpenSSH version, Debian by `+debNN`, Windows by RDP/SMB build,
+  `(Ubuntu)` style server headers, IIS) or `/etc/os-release` over SSH, with
+  `os_source` / `os_confidence`; apps by title / server / product (~30
+  known), other web apps by page title; Docker / Kubernetes / etcd ports;
+  `profile_findings` (open Docker API without TLS = high).
+- `discovery/lib/http_probe.py` (one GET per HTTP-looking port, title +
+  Server header, same-host redirects only) as a deep-scan step.
+- SSH collection adds `docker ps -a` with ports, CPU, memory, running
+  services, Kubernetes components; `sh`-compatible.
+- `device_types.py`: 12 types (router, printer, camera, NAS, TV / streamer,
+  console, smart home, Apple, phone, Windows, Linux server, Raspberry Pi)
+  using vendor, mDNS, SSDP, ports, apps, OS, names, gateway role, random
+  MAC; two medium clues = high; "Linux server" only as a fallback.
+- Report: OS source, app chips, expandable system details (dashboard,
+  summary.txt, History); stored in `hosts.extra`. Targeted network scans
+  default to the top-1000 port scan. Cloud provider label "(add an API
+  token below)". `docs/ACTIONS_PLAN.md` records the Actions page idea.
+**Why:** user: scanning a Pi showed no OS (it runs Ubuntu 24.04), no
+description of the servers on it, nothing about Docker or Kubernetes; and
+"add whatever we can scan and identify".
+**Issues / errors:**
+- The data was there but unused: nmap printed `OpenSSH 9.6p1 Ubuntu
+  3ubuntu13.19` and `http-title: Pi-Ai Control Dashboard`, but only nmap's
+  root-only OS fingerprint fed the report and web titles were dropped.
+- nmap called Uptime Kuma on 3001 "nessus?" and skipped its http scripts ->
+  `http_probe.py`; the page title confirmed "Uptime Kuma".
+- The user's second Pi scan had the port scan off (default "Off" even for
+  one target) -> targeted scans default to top 1000.
+- Docker / Kubernetes on the Pis expose no ports, so they are invisible
+  without an SSH login; stated in the docs and UI instead of guessed.
+- Rule review before use: "switch" (network switches), "envy" (HP laptops),
+  bare "wiz" (wizard), "dial" -> removed / narrowed; "Router / gateway" and
+  "Router / Wi-Fi" competed for the same box -> one type.
+- `2>/dev/null` after a failing `<` redirect still printed the error in
+  `sh` -> redirect order fixed.
+- Deleted the superseded `~/sentinelscan` folder on the user's request after
+  checking every file existed in the repo (only `rootkits.py` differed: the
+  old, pre-fix version) and that it held no credentials.
+**Verified:**
+- Rule tests: 17 cases, including false-positive checks (`core-switch`,
+  `hp-envy-laptop`, `wizard` -> no type; HP with Windows ports -> Windows,
+  HP with `_ipp` + 9100 -> printer; Samsung + "living room" -> TV, Samsung +
+  "Galaxy" -> phone).
+- Real targeted scan through the panel (172.16.0.37, .38 and 127.0.0.1 with
+  an SSH key card against the test sshd), 25 s: both Pis "Ubuntu 24.04 (from
+  SSH)", apps Pi-Ai Control Dashboard :5000 and Uptime Kuma :3001, type
+  Raspberry Pi (high); 127.0.0.1 OS "Linux Mint 22.3" from os-release,
+  kernel, CPU, memory, uptime, 40 services; all saved in Postgres.
+- Whole-network classification of an earlier run: router (high, 3 clues),
+  NAS, TV, Raspberry Pi.
+**Not verified:** Docker / Kubernetes sections against a host that has
+them (none reachable with a login here); Windows build mapping against a
+real Windows host.
+
 ## 2026-10-14 - Device types: Raspberry Pi; MAC addresses lost on big sweeps
 **Change:**
 - `discovery/lib/device_types.py`: vendor lookup from the IEEE registry

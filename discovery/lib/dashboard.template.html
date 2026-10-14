@@ -166,6 +166,10 @@
     .row { grid-template-columns: minmax(80px, 46%) 1fr auto; }
     th.opt, td.opt { display: none; }
   }
+  .chip.app{border-color:var(--series-1);}
+  details.sys{margin-top:6px;font-size:12px}
+  details.sys summary{cursor:pointer;color:var(--series-1)}
+  details.sys div{margin:3px 0 0 10px;line-height:1.45}
 </style>
 </head>
 <body>
@@ -322,6 +326,7 @@
     nports: (h.ports || []).length,
     ipkey: (h.ip || "").split(".").map((n) => String(n).padStart(3, "0")).join("."),
     hay: [h.ip, h.hostname, h.vendor, h.os, h.mac, h.mdns, h.netbios, h.ssdp, h.device_type, h.device_model,
+          ...(h.apps || []).map((a) => a.name), ...((h.system || {}).docker || []).map((c) => c.name + " " + c.image),
           ...(h.ports || []).map((p) => p.port + " " + p.service + " " + (p.version || ""))]
          .filter(Boolean).join(" ").toLowerCase(),
   }));
@@ -335,6 +340,20 @@
   $("typeFilter").insertAdjacentHTML("beforeend",
     allTypes.map((t) => `<option value="${esc(t)}">${esc(t)}</option>`).join(""));
   if (!allTypes.length) $("typeFilter").style.display = "none";
+
+  function sysBlock(sy) {
+    if (!sy) return "";
+    const r = [];
+    if (sy.os_release) r.push(`<b>OS</b> ${esc(sy.os_release)}`);
+    if (sy.model) r.push(`<b>Hardware</b> ${esc(sy.model)}`);
+    if (sy.cpu || sy.memory) r.push(`<b>CPU / RAM</b> ${esc(sy.cpu || "")} · ${esc(sy.memory || "")}`);
+    if (sy.uptime) r.push(`<b>Uptime</b> ${esc(sy.uptime)}`);
+    if ((sy.docker || []).length) r.push(`<b>Docker (${sy.docker.length})</b> ` + sy.docker.map((c) =>
+      `${esc(c.name)} <span class="muted">${esc(c.image)} · ${esc((c.status || "").split(" ")[0])}${c.ports ? " · " + esc(c.ports) : ""}</span>`).join("<br>"));
+    if ((sy.kubernetes || []).length) r.push(`<b>Kubernetes</b> ${esc(sy.kubernetes.join(" "))}`);
+    if ((sy.services || []).length) r.push(`<b>Running services (${sy.services.length})</b> <span class="muted">${esc(sy.services.join(", "))}</span>`);
+    return `<details class="sys"><summary>System details (from SSH login)</summary>${r.map((x) => `<div>${x}</div>`).join("")}</details>`;
+  }
 
   let sortKey = "ipkey", sortDir = 1;
 
@@ -364,10 +383,13 @@
             ${h.mac ? `<div class="mac">${esc(h.mac)}</div>` : ""}</td>
         <td>${h.device_type ? `<span class="chip" title="${esc((h.device_evidence || []).join("\n"))}">${esc(h.device_type)}${h.device_confidence !== "high" ? " ?" : ""}</span>${h.device_model ? `<div class="mac">${esc(h.device_model)}</div>` : ""}` : '<span class="muted">—</span>'}</td>
         <td class="opt">${h.vendor ? esc(h.vendor) : '<span class="muted">—</span>'}</td>
-        <td class="opt">${h.os ? esc(h.os) : '<span class="muted">—</span>'}</td>
+        <td class="opt">${h.os ? esc(h.os) + (h.os_source ? `<div class="mac" title="${esc(h.os_source)}">from ${esc(h.os_source.split(":")[0])}</div>` : "") : '<span class="muted">—</span>'}</td>
         <td>${h.nports ? `<div class="chips">${h.ports.map((p) =>
               `<span class="chip" title="${esc(p.version || p.service)}">${esc(p.port)} ${esc(p.service)}</span>`
-            ).join("")}</div>` : '<span class="muted">none found</span>'}</td>
+            ).join("")}</div>` : '<span class="muted">none found</span>'}
+            ${(h.apps || []).length ? `<div class="chips" style="margin-top:5px">${h.apps.map((a) =>
+              `<span class="chip app" title="${esc(a.category + " · " + a.evidence)}">${esc(a.name)}</span>`).join("")}</div>` : ""}
+            ${sysBlock(h.system)}</td>
       </tr>`).join("")
       : `<tr><td colspan="6" class="muted" style="padding:20px 14px">No host matches that filter.</td></tr>`;
     $("count").textContent = `${list.length} of ${hosts.length} host${hosts.length === 1 ? "" : "s"} shown`;
