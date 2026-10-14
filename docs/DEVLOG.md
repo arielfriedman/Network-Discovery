@@ -32,6 +32,32 @@ Entry template:
 
 ---
 
+## 2026-10-14 - Actions: several terminals as tabs
+**Change:** The Terminal pane has tabs: "+ New terminal on <machine>" opens another
+shell on the machine in "Run on" (mix this machine and SSH machines); click a tab to
+switch, × closes it. Up to 8 at once (was 4). All open tabs come back after a page
+reload. `>_` / "Open terminal there" reuse a tab on that machine if one is open.
+New `POST /api/term/poll` (one long-poll for all tabs). Files: `panel/terminal.py`
+(`poll`, `_ANY`, `_GEN`), `panel/serve.py` (route; `_send` ignores a closed
+connection), `panel/web/actions.html`, `style.css`.
+**Why:** user asked for at least 5 terminal windows to switch between.
+**Issues found (fixed):**
+- One long-poll per tab would hit the browser's ~6 connections per server limit at
+  6 tabs and block typing. Fix: one shared poll for all tabs.
+- Race: a new tab could start blank for up to 20 s, because the shared poll had
+  already started without it. Seen in headless Brave (remote tab empty) and reproduced
+  over HTTP. Fix: adding a tab aborts the poll and starts a new one that includes it;
+  the server also ends a waiting poll when a terminal opens or closes.
+- Cancelled polls made the server write to a closed connection. `_send` now ignores
+  BrokenPipe/ConnectionReset quietly.
+**Verified:** 6/6 poll tests (6 terminals, idle wait, wakes only for the one that
+printed, open ends the wait, unknown/closed ids reported gone); earlier 17/17 terminal
+tests (limit now 8). Headless Brave, scripted: 5 local tabs + connect → 6th tab on the
+SSH machine, typing in tab 6 shows within 2 s, tab 2 keeps its own output, closing tab 3
+leaves 5 on the server, reload brings all 5 back with their output, no JS errors.
+Screenshot checked.
+**Not verified:** by hand in the user's browser.
+
 ## 2026-10-14 - Actions: one-click run, clear "connected" state
 **Change:** (1) Clicking an action (the row or ▶) runs it at once; the Output shows
 each command as it runs. Dangerous actions still show the commands and ask first.

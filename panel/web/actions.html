@@ -45,12 +45,11 @@
     <section class="act-right">
       <div class="tabs2"><button class="tab2 on" data-tab="out">Output</button><button class="tab2" data-tab="term">Terminal</button></div>
       <div id="paneTerm" style="display:none">
-        <div class="term-head"><span id="xtWhere">Terminal</span>
-          <span class="pill" id="xtState" style="display:none"><span class="dot"></span><span></span></span>
-          <span class="spacer"></span>
-          <button class="btn" id="xtOpen">Open terminal</button>
-          <button class="btn ghost" id="xtClose" style="display:none">Close</button></div>
-        <div id="xt" class="xt"></div>
+        <div class="term-head xt-head"><div id="xtTabs" class="xt-tabs"></div>
+          <button class="btn ghost" id="xtNew" title="Open another terminal on the machine picked in Run on">+ New terminal</button></div>
+        <div id="xtStack" class="xt-stack">
+          <div id="xtEmpty" class="xt-empty">No terminal open yet. Click <b>+ New terminal</b> to start a shell on <b id="xtHere">this machine</b>.</div>
+        </div>
         <div class="muted xt-note">A real shell on the machine picked in "Run on". What you type and see here is not saved or logged.
           sudo asks for its password here.</div>
       </div>
@@ -200,10 +199,10 @@ document.addEventListener("DOMContentLoaded", () => {
     const steps = a.steps.map(s => s.here).filter(Boolean);
     if (a.dangerous && !confirm(`"${a.name}" is marked dangerous. Type its commands into the terminal on ${DATA.target}?`)) return;
     showTab("term");
-    if (SID && SWHERE !== TARGET) await xtClose();
-    if (!SID && !(await xtOpen())) return;
-    await sendInput(steps.map(c => c + "\r").join(""));
-    XT.focus();
+    let t = termFor(TARGET);
+    if (t) activate(t); else if (!(t = await newTerm(TARGET))) return;
+    await send(t, steps.map(c => c + "\r").join(""));
+    t.xt.focus();
   }
   function prepare(id) {
     const a = byId(id), steps = a.steps.map(s => s.here).filter(Boolean);
@@ -249,75 +248,126 @@ document.addEventListener("DOMContentLoaded", () => {
 
 
 
-  // ── interactive terminal (stage 4) ───────────────────────────────────────
-  let XT = null, FIT = null, SID = null, SWHERE = null, xoff = 0, inQ = Promise.resolve();
+  // ── interactive terminals (stage 4): several, as tabs ───────────────────
+  // Each tab = one shell session on the server (this machine or an SSH machine),
+  // its own xterm.js instance and its own long-poll loop.
+  const TABS = []; let ACTIVE = null, NEXT_N = 1;
+  const MAX_TABS = 8;
   function showTab(name) {
     document.querySelectorAll(".tab2").forEach(b => b.classList.toggle("on", b.dataset.tab === name));
     $("paneOut").style.display = name === "out" ? "" : "none";
     $("paneTerm").style.display = name === "term" ? "" : "none";
-    if (name === "term") { ensureXt(); setTimeout(() => { try { FIT.fit(); } catch (e) {} }, 0); }
+    if (name === "term" && ACTIVE) setTimeout(() => { fitTab(ACTIVE); ACTIVE.xt.focus(); }, 0);
   }
   document.querySelectorAll(".tab2").forEach(b => b.onclick = () => showTab(b.dataset.tab));
-  function ensureXt() {
-    if (XT) return;
-    XT = new Terminal({ cursorBlink: true, fontSize: 13, scrollback: 5000,
+  const fitTab = t => { try { t.fit.fit(); } catch (e) {} };
+  const short = w => w.replace(/^(.{0,26}).*$/, (m, a) => a.length < w.length ? a + "…" : w);
+  function saveTabs() {
+    try { sessionStorage.setItem("sentinel-terms", JSON.stringify(TABS.filter(t => t.alive)
+      .map(t => ({ id: t.id, where: t.where, target: t.target, n: t.n })))); } catch (e) {}
+  }
+  function renderTabs() {
+    $("xtTabs").innerHTML = TABS.map(t => `<button class="xt-tab ${t === ACTIVE ? "on" : ""} ${t.alive ? "" : "dead"}" data-n="${t.n}"
+        title="${esc(t.where)}${t.alive ? "" : " (ended)"}"><span class="dot"></span>${t.n} · ${esc(short(t.where))}
+        <span class="x" data-x="${t.n}" title="Close this terminal">×</span></button>`).join("");
+    $("xtTabs").querySelectorAll(".xt-tab").forEach(b => b.onclick = e => {
+      const t = TABS.find(x => x.n === +b.dataset.n);
+      if (e.target.dataset.x) closeTab(t); else activate(t);
+    });
+    $("xtEmpty").style.display = TABS.length ? "none" : "";
+    $("xtNew").disabled = TABS.filter(t => t.alive).length >= MAX_TABS;
+    xtBtn(); saveTabs();
+  }
+  function xtBtn() {
+    const here = DATA ? DATA.target : "this machine";
+    $("xtNew").textContent = `+ New terminal on ${short(here)}`;
+    $("xtHere").textContent = here;
+  }
+  function activate(t) {
+    ACTIVE = t;
+    TABS.forEach(x => x.el.style.display = x === t ? "" : "none");
+    renderTabs();
+    if (t) setTimeout(() => { fitTab(t); t.xt.focus(); }, 0);
+  }
+  function makeTab(id, where, target, n) {
+    const el = document.createElement("div"); el.className = "xt"; $("xtStack").appendChild(el);
+    const xt = new Terminal({ cursorBlink: true, fontSize: 13, scrollback: 5000,
       fontFamily: 'ui-monospace, "DejaVu Sans Mono", Menlo, Consolas, monospace',
       theme: { background: "#0d1117", foreground: "#e6edf3" } });
-    FIT = new FitAddon.FitAddon(); XT.loadAddon(FIT); XT.open($("xt"));
-    XT.onData(d => { if (SID) sendInput(d); });
-    XT.onResize(({ cols, rows }) => { if (SID) api(`/api/term/${SID}/resize`, { cols, rows }).catch(() => {}); });
-    new ResizeObserver(() => { try { FIT.fit(); } catch (e) {} }).observe($("xt"));
-    XT.write("Click \u201cOpen terminal\u201d above to start a shell.\r\n");
+    const fit = new FitAddon.FitAddon(); xt.loadAddon(fit); xt.open(el);
+    const t = { id, where, target, n, el, xt, fit, off: 0, alive: true, inQ: Promise.resolve() };
+    xt.onData(d => send(t, d));
+    xt.onResize(({ cols, rows }) => { if (t.alive) api(`/api/term/${t.id}/resize`, { cols, rows }).catch(() => {}); });
+    new ResizeObserver(() => { if (t === ACTIVE) fitTab(t); }).observe(el);
+    TABS.push(t); NEXT_N = Math.max(NEXT_N, n + 1);
+    kickPoll();
+    return t;
   }
-  const sendInput = d => (inQ = inQ.then(() => api(`/api/term/${SID}/write`, { data: d })
-    .catch(e => XT.write(`\r\n[${e.message}]\r\n`))));
-  function xtBtn() {
-    const here = DATA ? DATA.target : "this machine", other = SID && SWHERE !== TARGET;
-    $("xtOpen").textContent = other ? `Switch terminal to ${here}` : `Open terminal on ${here}`;
-    $("xtOpen").style.display = SID && !other ? "none" : "";
-    $("xtClose").style.display = SID ? "" : "none";
-  }
-  function xtUi(state) {
-    xtBtn();
-    const p = $("xtState"); p.style.display = state ? "" : "none";
-    p.className = "pill " + (state === "connected" ? "ok" : "bad"); p.lastChild.textContent = state || "";
-  }
-  async function xtOpen() {
-    ensureXt(); try { FIT.fit(); } catch (e) {}
+  const send = (t, d) => { if (t.alive) t.inQ = t.inQ.then(() => api(`/api/term/${t.id}/write`, { data: d })
+    .catch(e => t.xt.write(`\r\n[${e.message}]\r\n`))); return t.inQ; };
+  async function newTerm(target) {
+    if (TABS.filter(t => t.alive).length >= MAX_TABS) { alert(`At most ${MAX_TABS} terminals at once - close one first.`); return null; }
+    showTab("term");
+    // size from the visible stack so the shell starts with the right width
+    const box = $("xtStack").getBoundingClientRect(), cols = Math.max(40, Math.floor((box.width - 12) / 7.8)),
+          rows = Math.max(10, Math.floor((box.height - 12) / 17));
     let r;
-    try { r = await api("/api/term/open", { target: TARGET, cols: XT.cols, rows: XT.rows }); }
-    catch (e) { XT.write(`\r\n[${e.message}]\r\n`); return false; }
-    XT.reset(); attach(r.id, r.where, TARGET, 0); XT.focus();
-    return true;
+    try { r = await api("/api/term/open", { target, cols, rows }); }
+    catch (e) { alert(`Could not open a terminal: ${e.message}`); return null; }
+    const t = makeTab(r.id, r.where, target, NEXT_N);
+    activate(t);
+    return t;
   }
-  function attach(id, where, target, from) {
-    SID = id; SWHERE = target; xoff = from;
-    $("xtWhere").textContent = where;
-    try { sessionStorage.setItem("sentinel-term", JSON.stringify({ id, where, target })); } catch (e) {}
-    xtUi("connected"); readLoop(id);
+  // one shared long-poll for all tabs (browsers allow only ~6 connections per server)
+  let POLLING = false, POLL_CTRL = null;
+  const TOKEN = (document.querySelector('meta[name="sentinel-token"]') || {}).content || "";
+  function kickPoll() { if (POLL_CTRL) POLL_CTRL.abort(); pollAll(); }   // a tab was added: restart with it included
+  async function pollAll() {
+    if (POLLING) return; POLLING = true;
+    try {
+      while (TABS.some(t => t.alive)) {
+        const offsets = {}; TABS.filter(t => t.alive).forEach(t => offsets[t.id] = t.off);
+        let r;
+        const ctrl = POLL_CTRL = new AbortController();
+        try {
+          const res = await fetch("/api/term/poll", { method: "POST", signal: ctrl.signal,
+            headers: { "X-Sentinel-Token": TOKEN, "Content-Type": "application/json" }, body: JSON.stringify({ offsets }) });
+          r = await res.json();
+          if (!res.ok) throw new Error(r.error || `HTTP ${res.status}`);
+        } catch (e) {
+          if (e.name !== "AbortError") await new Promise(ok => setTimeout(ok, 1500));
+          continue;
+        }
+        for (const [id, x] of Object.entries(r.sessions)) {
+          const t = TABS.find(t => t.id === id && t.alive); if (!t) continue;
+          if (x.reset) t.xt.reset();
+          if (x.data) t.xt.write(Uint8Array.from(atob(x.data), c => c.charCodeAt(0)));
+          t.off = x.offset;
+          if (!x.alive) { t.xt.write(x.gone ? "\r\n[this terminal was closed]\r\n"
+                                            : "\r\n[the shell has ended - close this tab with ×]\r\n"); ended(t); }
+        }
+      }
+    } finally { POLLING = false; }
   }
-  async function readLoop(sid) {
-    while (SID === sid) {
-      let r;
-      try { r = await api(`/api/term/${sid}/read`, { offset: xoff }); }
-      catch (e) { if (SID === sid) { XT.write(`\r\n[${e.message}]\r\n`); ended(); } return; }
-      if (SID !== sid) return;
-      if (r.reset) XT.reset();
-      if (r.data) XT.write(Uint8Array.from(atob(r.data), c => c.charCodeAt(0)));
-      xoff = r.offset;
-      if (!r.alive) { XT.write("\r\n[the shell has ended]\r\n"); ended(); return; }
-    }
+  function ended(t) { t.alive = false; renderTabs(); }
+  async function closeTab(t) {
+    const was = t.alive; t.alive = false;
+    if (was) api(`/api/term/${t.id}/close`, {}).catch(() => {});
+    t.xt.dispose(); t.el.remove();
+    const i = TABS.indexOf(t); TABS.splice(i, 1);
+    if (ACTIVE === t) activate(TABS[Math.min(i, TABS.length - 1)] || null); else renderTabs();
   }
-  function ended() { SID = null; try { sessionStorage.removeItem("sentinel-term"); } catch (e) {} xtUi("closed"); }
-  async function xtClose() { const sid = SID; ended(); if (sid) await api(`/api/term/${sid}/close`, {}).catch(() => {}); }
-  $("xtOpen").onclick = async () => { if (SID) await xtClose(); xtOpen(); };
-  $("xtClose").onclick = async () => { await xtClose(); XT.write("\r\n[closed]\r\n"); };
-  (async () => {                                   // after a page reload: re-attach to the open terminal
-    let saved; try { saved = JSON.parse(sessionStorage.getItem("sentinel-term") || "null"); } catch (e) {}
-    if (!saved) return;
+  const termFor = target => (ACTIVE && ACTIVE.alive && ACTIVE.target === target) ? ACTIVE
+    : TABS.find(t => t.alive && t.target === target) || null;
+  $("xtNew").onclick = () => newTerm(TARGET);
+  (async () => {                                   // after a page reload: re-attach to the open terminals
+    let saved; try { saved = JSON.parse(sessionStorage.getItem("sentinel-terms") || "[]"); } catch (e) { saved = []; }
+    if (!saved.length) return;
     let r; try { r = await api("/api/term/list", {}); } catch (e) { return; }
-    if (!r.sessions.some(s => s.id === saved.id && s.alive)) { ended(); xtUi(null); return; }
-    ensureXt(); attach(saved.id, saved.where, saved.target, 0);
+    const live = new Set(r.sessions.filter(s => s.alive).map(s => s.id));
+    saved.filter(x => live.has(x.id)).forEach(x => makeTab(x.id, x.where, x.target, x.n));
+    TABS.forEach(t => t.el.style.display = "none");
+    if (TABS.length) activate(TABS[TABS.length - 1]); else renderTabs();
   })();
 
   // ── machines over SSH ────────────────────────────────────────────────────
@@ -346,10 +396,10 @@ document.addEventListener("DOMContentLoaded", () => {
   let PREV = [];
   $("tgtSel").onchange = () => { TARGET = $("tgtSel").value; $("confirmBox").style.display = "none"; loadTargets(); load(); };
   $("cbDisc").onclick = async () => {
-    if (SID && SWHERE === TARGET) await xtClose();
+    TABS.filter(t => t.target === TARGET).forEach(closeTab);
     await api("/api/actions/targets/disconnect", { id: TARGET }).catch(() => {}); TARGET = ""; await loadTargets(); load();
   };
-  $("cbTerm").onclick = async () => { showTab("term"); if (SID && SWHERE === TARGET) { XT.focus(); return; } if (SID) await xtClose(); xtOpen(); };
+  $("cbTerm").onclick = () => { showTab("term"); const t = termFor(TARGET); if (t) activate(t); else newTerm(TARGET); };
 
   const authRows = () => {
     const a = $("kAuth").value, pw = a === "password";
@@ -381,7 +431,7 @@ document.addEventListener("DOMContentLoaded", () => {
       const t = await api("/api/actions/targets/connect", body);
       clearSecrets(); $("connModal").style.display = "none";
       TARGET = t.id; await loadTargets(); await load();
-      showTab("term"); if (SID) await xtClose(); xtOpen();
+      newTerm(TARGET);
     } catch (e) {
       if (e.data && e.data.needs_trust) {
         trust = e.data.needs_trust;

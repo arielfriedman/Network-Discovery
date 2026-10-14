@@ -135,13 +135,19 @@ terminal: colours, `htop`, `nano`, `sudo` password prompts typed by you.
 - Transport: long-polling on the panel's own HTTP server (no extra packages).
   `POST /api/term/open {target, cols, rows}`, `/api/term/list`,
   `/api/term/<id>/read {offset}` (waits up to 20 s for new output),
-  `/write {data}`, `/resize {cols, rows}`, `/close`. All POST with the panel token,
-  reads included, because the output can contain anything.
+  `/write {data}`, `/resize {cols, rows}`, `/close`, and `POST /api/term/poll
+  {offsets: {id: offset}}`: one long-poll for all open terminals. All POST with the
+  panel token, reads included, because the output can contain anything.
+- Several terminals as tabs (added 2026-10-14): "+ New terminal on <machine>" opens
+  another one on the machine in "Run on"; each tab shows its number and machine, ×
+  closes it, a grey dot means the shell ended. The page uses one shared poll for all
+  tabs, because browsers allow only ~6 connections per server and one poll per tab
+  would leave no room for typing. Adding a tab cancels and restarts that poll.
 - "Type into terminal" on an action's confirm box types its commands into the
   terminal (opening one on the right machine), so prompts can be answered.
 - Not stored anywhere: typed text and output stay in memory (last 1 MB per session,
   so a page reload re-attaches and redraws). Only open/close goes in the activity log.
-- Limits: 4 terminals at once; a terminal nobody has read for 2 minutes (tab closed)
+- Limits: 8 terminals at once; a terminal nobody has read for 2 minutes (tab closed)
   is closed; closing ends the shell and its jobs (SIGHUP to the group, then SIGKILL);
   disconnecting a machine ends its terminals; stopping the panel closes all.
 - Code: `panel/terminal.py`, routes in `panel/serve.py`, UI in `panel/web/actions.html`.

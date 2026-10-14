@@ -527,12 +527,15 @@ class Handler(BaseHTTPRequestHandler):
         if isinstance(body, (dict, list)):
             body = json.dumps(body)
         data = body.encode("utf-8") if isinstance(body, str) else body
-        self.send_response(code)
-        self.send_header("Content-Type", ctype)
-        self.send_header("Content-Length", str(len(data)))
-        self.send_header("Cache-Control", "no-store")
-        self.end_headers()
-        self.wfile.write(data)
+        try:
+            self.send_response(code)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(data)
+        except (BrokenPipeError, ConnectionResetError):
+            pass        # the page went away or cancelled (e.g. a terminal poll restarted)
 
     def _host_ok(self) -> bool:
         """Only answer to our own name: blocks DNS-rebinding attacks from web pages."""
@@ -724,6 +727,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self._term(lambda: term.open_session(b, self.client_address[0]))
             if what == "list":
                 return self._term(lambda: {"sessions": term.list_open()})
+            if what == "poll":
+                offs = b.get("offsets") if isinstance(b.get("offsets"), dict) else {}
+                return self._term(lambda: term.poll(offs))
             m = re.match(r"^([0-9a-f]{12})/(read|write|resize|close)$", what)
             if not m:
                 return self._send(404, {"error": "not found"})

@@ -11,7 +11,7 @@ output can contain anything typed on the machine. Typed text and output are
 never written to the database or the activity log; only open/close is logged.
 sudo passwords are typed into the terminal like in any other terminal.
 
-Limits: 4 sessions at once; a session nobody has read for 2 minutes (tab
+Limits: 8 sessions at once; a session nobody has read for 2 minutes (tab
 closed) is closed; the last 1 MB of output is kept for reloads.
 """
 from __future__ import annotations
@@ -31,13 +31,22 @@ from pathlib import Path
 
 import db
 
-MAX_SESSIONS = 4
+MAX_SESSIONS = 8
 KEEP = 1024 * 1024
 IDLE = 120
 POLL_WAIT = 20
 
 SESSIONS: dict[str, "Session"] = {}
 _LOCK = threading.Lock()
+_ANY = threading.Condition()            # notified when any session has new output or ends
+_GEN = 0                                 # bumped when a session opens or closes (ends a poll early)
+
+
+def _changed() -> None:
+    global _GEN
+    with _ANY:
+        _GEN += 1
+        _ANY.notify_all()
 
 
 class TermError(ValueError):
@@ -64,11 +73,18 @@ class Session:
                 del self.buf[:cut]
                 self.base += cut
             self.cond.notify_all()
+        with _ANY:
+            _ANY.notify_all()
 
     def _ended(self) -> None:
         with self.cond:
             self.alive = False
             self.cond.notify_all()
+        with _ANY:
+            _ANY.notify_all()
+
+    def pending(self, offset: int) -> bool:
+        return not self.alive or self.base + len(self.buf) > offset
 
     def read(self, offset: int, wait: float = POLL_WAIT) -> dict:
         self.seen = time.time()
@@ -225,6 +241,7 @@ def open_session(body: dict, source_ip: str | None = None) -> dict:
         s = LocalSession(cols, rows)
     with _LOCK:
         SESSIONS[s.id] = s
+    _changed()
     db.log("terminal.open", s.where, {"session": s.id}, source_ip)
     return {"id": s.id, "where": s.where}
 
@@ -235,6 +252,41 @@ def get(sid: str) -> Session:
     if not s:
         raise TermError("that terminal is closed")
     return s
+
+
+def poll(offsets: dict, wait: float = POLL_WAIT) -> dict:
+    """One long-poll for several terminals: {id: offset} -> {id: read result} for those
+    with new output (or ended / gone). Browsers allow ~6 connections per server, so one
+    waiting request for all tabs leaves room for typing."""
+    want = {}
+    for sid, off in list(offsets.items())[:MAX_SESSIONS * 2]:
+        try:
+            want[str(sid)] = int(off)
+        except (TypeError, ValueError):
+            continue
+    end = time.time() + wait
+    with _ANY:
+        gen = _GEN
+        while True:
+            with _LOCK:
+                found = {sid: SESSIONS.get(sid) for sid in want}
+            ready = [sid for sid, s in found.items() if s is None or s.pending(want[sid])]
+            left = end - time.time()
+            if ready or left <= 0 or _GEN != gen:
+                break
+            _ANY.wait(min(left, 1.0))
+    out = {}
+    for sid in ready:
+        s = found[sid]
+        if s is None:
+            out[sid] = {"data": "", "offset": want[sid], "alive": False, "gone": True, "reset": False}
+        else:
+            s.seen = time.time()
+            out[sid] = s.read(want[sid], wait=0)
+    for sid, s in found.items():        # a waiting tab still counts as being looked at
+        if s is not None:
+            s.seen = time.time()
+    return {"sessions": out}
 
 
 def write(sid: str, data: str) -> dict:
@@ -265,6 +317,7 @@ def close(sid: str, reason: str = "closed") -> dict:
         s.close()
     except Exception:  # noqa: BLE001
         pass
+    _changed()
     db.log("terminal.close", s.where, {"session": s.id, "reason": reason,
                                        "minutes": round((time.time() - s.opened) / 60, 1)})
     return {"closed": True}
