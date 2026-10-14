@@ -2,7 +2,7 @@
 
 Status: stages 1-3 built 2026-10-14 (`panel/actions.py`, `panel/web/actions.html`,
 migration `010_actions.sql`). Stage 5 (remote hosts over SSH) built 2026-10-14
-(see "Remote targets"). Stage 4 (interactive terminal) is next.
+(see "Remote targets"). Stage 4 (interactive terminal) built 2026-10-14 (see "Terminal").
 
 ## What the user asked for
 
@@ -114,6 +114,30 @@ After connecting, "Run on" switches to that machine: the distro is read from its
   `GET /api/actions/targets`, `POST /api/actions/targets/{connect,disconnect,forget}`,
   `GET /api/actions?target=<id>`.
 
+## Terminal (stage 4, built 2026-10-14)
+
+A **Terminal** tab next to Output on the Actions page. "Open terminal" starts a real
+shell on the machine picked in "Run on": this machine (`bash -l` in a pseudo-terminal,
+home folder, panel database settings removed from the environment) or a machine
+connected over SSH (a shell channel with a pty on the open connection). Full
+terminal: colours, `htop`, `nano`, `sudo` password prompts typed by you.
+
+- Browser side: xterm.js 5.5.0 + fit addon, copied unchanged from npm into
+  `panel/web/vendor/xterm/` (MIT; checksums in its README.txt). No CDN, works offline.
+- Transport: long-polling on the panel's own HTTP server (no extra packages).
+  `POST /api/term/open {target, cols, rows}`, `/api/term/list`,
+  `/api/term/<id>/read {offset}` (waits up to 20 s for new output),
+  `/write {data}`, `/resize {cols, rows}`, `/close`. All POST with the panel token,
+  reads included, because the output can contain anything.
+- "Type into terminal" on an action's confirm box types its commands into the
+  terminal (opening one on the right machine), so prompts can be answered.
+- Not stored anywhere: typed text and output stay in memory (last 1 MB per session,
+  so a page reload re-attaches and redraws). Only open/close goes in the activity log.
+- Limits: 4 terminals at once; a terminal nobody has read for 2 minutes (tab closed)
+  is closed; closing ends the shell and its jobs (SIGHUP to the group, then SIGKILL);
+  disconnecting a machine ends its terminals; stopping the panel closes all.
+- Code: `panel/terminal.py`, routes in `panel/serve.py`, UI in `panel/web/actions.html`.
+
 ## Resume here
 
-Next: stage 4 (interactive terminal).
+Next: the user picks. Open items are in docs/DEVLOG.md and the memory note.

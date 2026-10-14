@@ -227,3 +227,9 @@ details.sys div{margin:3px 0 0 12px}
 .modal-box .chk,.confirm .chk{display:flex;align-items:center;gap:7px;font-size:13.5px}
 .modal-box .chk input,.confirm .chk input{min-width:0;width:16px;height:16px;padding:0}
 .filebtn2 input{display:none}
+.tabs2{display:flex;gap:4px;margin-bottom:8px}
+.tab2{background:none;border:1px solid var(--border);border-radius:var(--radius);padding:6px 14px;font:inherit;font-size:13.5px;color:inherit;cursor:pointer}
+.tab2.on{background:var(--surface-1);font-weight:600}
+.xt{height:460px;background:#0d1117;border-radius:var(--radius);padding:6px;overflow:hidden}
+.xt-note{font-size:12.5px;margin-top:6px}
+.xt .xterm-viewport{scrollbar-color:#30363d #0d1117;background-color:#0d1117}

@@ -32,6 +32,31 @@ Entry template:
 
 ---
 
+## 2026-10-14 - Actions: interactive terminal (stage 4)
+**Change:** Terminal tab on the Actions page: a real shell on this machine or on a
+machine connected over SSH, drawn with xterm.js (vendored, `panel/web/vendor/xterm/`,
+npm checksums verified), long-polling over the panel's HTTP API. "Type into terminal"
+button on actions. New `panel/terminal.py`; routes `/api/term/*` in `panel/serve.py`;
+`actions.html`, `style.css`. Details: `docs/ACTIONS_PLAN.md` "Terminal".
+**Why:** plan stage 4; lets the user answer prompts (sudo passwords, y/n) themselves.
+**Decisions:** long-polling instead of WebSocket so the stdlib server needs no new
+package; all terminal calls are POST with the token (output can hold secrets); typed
+text and output are never logged or stored in the database.
+**Issues found in testing:**
+- Headless Firefox screenshot showed an empty terminal. Cause: xterm.js doesn't draw
+  inside the off-screen iframe the screenshot harness used (its buffer had the right
+  text). Not a product bug: loading the page directly draws correctly.
+- The scrollbar track was white on the dark terminal. Fixed with dark scrollbar colours.
+**Verified:** 17/17 API tests: token required, local shell (TERM=xterm-256color, size,
+database settings not in env), resize, reload replays output, bad offset resets, close
+kills the shell and its background job, `exit` ends the session, ended sessions
+reaped, 4-terminal limit, idle close, remote shell over the test sshd with correct size,
+sudo password typed in the terminal (stand-in sudo), disconnect ends the remote
+terminal, closed machine refused. Browser: page opened a shell and showed coloured
+output (screenshot).
+**Not verified:** typing by hand in a real browser (only scripted input), full-screen
+programs (htop/nano), real sudo, a real remote machine.
+
 ## 2026-10-14 - Actions: run on a machine you connect to over SSH
 **Change:** Actions can now run on another machine. A "Connect to a machine…" dialog
 (password / pasted key / key file, optional sudo password) plus a "Run on" picker.

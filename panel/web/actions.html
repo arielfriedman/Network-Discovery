@@ -4,6 +4,9 @@
 <title>SentinelScan Actions</title>
 <link rel="stylesheet" href="/web/style.css">
 <script src="/web/common.js" defer></script>
+<link rel="stylesheet" href="/web/vendor/xterm/xterm.css">
+<script src="/web/vendor/xterm/xterm.js" defer></script>
+<script src="/web/vendor/xterm/addon-fit.js" defer></script>
 </head>
 <body><div class="wrap wide">
   <header><h1>Actions</h1>
@@ -33,6 +36,18 @@
     </section>
 
     <section class="act-right">
+      <div class="tabs2"><button class="tab2 on" data-tab="out">Output</button><button class="tab2" data-tab="term">Terminal</button></div>
+      <div id="paneTerm" style="display:none">
+        <div class="term-head"><span id="xtWhere">Terminal</span>
+          <span class="pill" id="xtState" style="display:none"><span class="dot"></span><span></span></span>
+          <span class="spacer"></span>
+          <button class="btn" id="xtOpen">Open terminal</button>
+          <button class="btn ghost" id="xtClose" style="display:none">Close</button></div>
+        <div id="xt" class="xt"></div>
+        <div class="muted xt-note">A real shell on the machine picked in "Run on". What you type and see here is not saved or logged.
+          sudo asks for its password here.</div>
+      </div>
+      <div id="paneOut">
       <div class="term-head">
         <span id="termTitle">Output</span>
         <span class="pill" id="termState" style="display:none"><span class="dot"></span><span></span></span>
@@ -42,6 +57,7 @@
       </div>
       <div id="confirmBox" class="confirm" style="display:none"></div>
       <pre id="term" class="term">Pick an action on the left. Its exact commands are shown here before anything runs.</pre>
+      </div>
       <h2>Recent runs</h2>
       <div class="tbl-wrap"><table class="data">
         <thead><tr><th>When</th><th>Action</th><th>Where</th><th>Result</th><th>Steps (exit code)</th></tr></thead>
@@ -157,9 +173,23 @@ document.addEventListener("DOMContentLoaded", () => {
     $("confirmBox").innerHTML = `<div><b>About to run on ${esc(DATA.target)} (${esc(DATA.distro.pretty)}):</b></div>
       <ol>${steps.map(s => `<li><code>${esc(s)}</code></li>`).join("")}</ol>
       ${a.dangerous ? '<label class="chk"><input type="checkbox" id="dangerOk"> This action is marked dangerous. I want to run it.</label>' : ""}
-      <div class="row-btns"><button class="btn" id="goBtn">Run</button><button class="btn ghost" id="noBtn">Cancel</button>
+      <div class="row-btns"><button class="btn" id="goBtn">Run</button>
+      <button class="btn ghost" id="typeBtn" title="Type the commands into the terminal, where you can answer prompts such as sudo passwords">Type into terminal</button>
+      <button class="btn ghost" id="noBtn">Cancel</button>
       <span class="muted">${a.stop_on_error ? "Stops at the first failing command." : "Runs every command even if one fails."}</span></div>`;
     $("noBtn").onclick = () => { $("confirmBox").style.display = "none"; };
+    $("typeBtn").onclick = async () => {
+      if (a.dangerous && !$("dangerOk").checked) { alert("Tick the box to confirm."); return; }
+      $("confirmBox").style.display = "none";
+      showTab("term");
+      if (SID && SWHERE !== TARGET) {
+        if (!confirm(`The terminal is open on ${$("xtWhere").textContent}. Close it and open one on ${DATA.target}?`)) return;
+        await xtClose();
+      }
+      if (!SID && !(await xtOpen())) return;
+      await sendInput(steps.map(c => c + "\r").join(""));
+      XT.focus();
+    };
     $("goBtn").onclick = async () => {
       if (a.dangerous && !$("dangerOk").checked) { alert("Tick the box to confirm."); return; }
       let r;
@@ -194,6 +224,73 @@ document.addEventListener("DOMContentLoaded", () => {
     if (r.active && !runId) { runId = r.active; offset = 0; poll(); }
   }
 
+
+
+  // ── interactive terminal (stage 4) ───────────────────────────────────────
+  let XT = null, FIT = null, SID = null, SWHERE = null, xoff = 0, inQ = Promise.resolve();
+  function showTab(name) {
+    document.querySelectorAll(".tab2").forEach(b => b.classList.toggle("on", b.dataset.tab === name));
+    $("paneOut").style.display = name === "out" ? "" : "none";
+    $("paneTerm").style.display = name === "term" ? "" : "none";
+    if (name === "term") { ensureXt(); setTimeout(() => { try { FIT.fit(); } catch (e) {} }, 0); }
+  }
+  document.querySelectorAll(".tab2").forEach(b => b.onclick = () => showTab(b.dataset.tab));
+  function ensureXt() {
+    if (XT) return;
+    XT = new Terminal({ cursorBlink: true, fontSize: 13, scrollback: 5000,
+      fontFamily: 'ui-monospace, "DejaVu Sans Mono", Menlo, Consolas, monospace',
+      theme: { background: "#0d1117", foreground: "#e6edf3" } });
+    FIT = new FitAddon.FitAddon(); XT.loadAddon(FIT); XT.open($("xt"));
+    XT.onData(d => { if (SID) sendInput(d); });
+    XT.onResize(({ cols, rows }) => { if (SID) api(`/api/term/${SID}/resize`, { cols, rows }).catch(() => {}); });
+    new ResizeObserver(() => { try { FIT.fit(); } catch (e) {} }).observe($("xt"));
+    XT.write("Click \u201cOpen terminal\u201d to start a shell.\r\n");
+  }
+  const sendInput = d => (inQ = inQ.then(() => api(`/api/term/${SID}/write`, { data: d })
+    .catch(e => XT.write(`\r\n[${e.message}]\r\n`))));
+  function xtUi(state) {
+    $("xtOpen").style.display = SID ? "none" : "";
+    $("xtClose").style.display = SID ? "" : "none";
+    const p = $("xtState"); p.style.display = state ? "" : "none";
+    p.className = "pill " + (state === "connected" ? "ok" : "bad"); p.lastChild.textContent = state || "";
+  }
+  async function xtOpen() {
+    ensureXt(); try { FIT.fit(); } catch (e) {}
+    let r;
+    try { r = await api("/api/term/open", { target: TARGET, cols: XT.cols, rows: XT.rows }); }
+    catch (e) { XT.write(`\r\n[${e.message}]\r\n`); return false; }
+    XT.reset(); attach(r.id, r.where, TARGET, 0); XT.focus();
+    return true;
+  }
+  function attach(id, where, target, from) {
+    SID = id; SWHERE = target; xoff = from;
+    $("xtWhere").textContent = where;
+    try { sessionStorage.setItem("sentinel-term", JSON.stringify({ id, where, target })); } catch (e) {}
+    xtUi("connected"); readLoop(id);
+  }
+  async function readLoop(sid) {
+    while (SID === sid) {
+      let r;
+      try { r = await api(`/api/term/${sid}/read`, { offset: xoff }); }
+      catch (e) { if (SID === sid) { XT.write(`\r\n[${e.message}]\r\n`); ended(); } return; }
+      if (SID !== sid) return;
+      if (r.reset) XT.reset();
+      if (r.data) XT.write(Uint8Array.from(atob(r.data), c => c.charCodeAt(0)));
+      xoff = r.offset;
+      if (!r.alive) { XT.write("\r\n[the shell has ended]\r\n"); ended(); return; }
+    }
+  }
+  function ended() { SID = null; try { sessionStorage.removeItem("sentinel-term"); } catch (e) {} xtUi("closed"); }
+  async function xtClose() { const sid = SID; ended(); if (sid) await api(`/api/term/${sid}/close`, {}).catch(() => {}); }
+  $("xtOpen").onclick = xtOpen;
+  $("xtClose").onclick = async () => { await xtClose(); XT.write("\r\n[closed]\r\n"); };
+  (async () => {                                   // after a page reload: re-attach to the open terminal
+    let saved; try { saved = JSON.parse(sessionStorage.getItem("sentinel-term") || "null"); } catch (e) {}
+    if (!saved) return;
+    let r; try { r = await api("/api/term/list", {}); } catch (e) { return; }
+    if (!r.sessions.some(s => s.id === saved.id && s.alive)) { ended(); xtUi(null); return; }
+    ensureXt(); attach(saved.id, saved.where, saved.target, 0);
+  })();
 
   // ── machines over SSH ────────────────────────────────────────────────────
   let OPEN = [];

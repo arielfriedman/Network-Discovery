@@ -37,6 +37,7 @@ import db
 import db_backup
 import actions as act
 import action_targets as atg
+import terminal as term
 import targets as tg
 import creds as credmod        # discovery/lib/creds.py (path set up by targets)
 from devices import manager as devmgr
@@ -571,6 +572,12 @@ class Handler(BaseHTTPRequestHandler):
         except (act.ActionError, ValueError, TypeError) as e:
             return self._send(400, {"error": str(e)})
 
+    def _term(self, fn):
+        try:
+            return self._send(200, fn())
+        except (term.TermError, ValueError, TypeError, OSError) as e:
+            return self._send(400, {"error": str(e)})
+
     def _device_call(self, fn):
         """Run a device-manager call and map its errors to HTTP answers."""
         try:
@@ -711,6 +718,22 @@ class Handler(BaseHTTPRequestHandler):
                                             "older_than_days": days, "all": body.get("all") is True},
                    self.client_address[0])
             return self._send(200, {"deleted": len(deleted), "files_removed": files})
+        if path.startswith("/api/term/"):
+            b, what = self._body(), path[len("/api/term/"):]
+            if what == "open":
+                return self._term(lambda: term.open_session(b, self.client_address[0]))
+            if what == "list":
+                return self._term(lambda: {"sessions": term.list_open()})
+            m = re.match(r"^([0-9a-f]{12})/(read|write|resize|close)$", what)
+            if not m:
+                return self._send(404, {"error": "not found"})
+            sid, op = m.groups()
+            return self._term({
+                "read": lambda: term.get(sid).read(int(b.get("offset") or 0)),
+                "write": lambda: term.write(sid, str(b.get("data") or "")),
+                "resize": lambda: term.resize(sid, b),
+                "close": lambda: term.close(sid),
+            }[op])
         if path.startswith("/api/actions/"):
             b, what = self._body(), path[len("/api/actions/"):]
             ip = self.client_address[0]
@@ -870,6 +893,8 @@ def main():
         srv.serve_forever()
     except KeyboardInterrupt:
         print("\nstopped.")
+    finally:
+        term.close_all()                       # don't leave shells behind
 
 
 if __name__ == "__main__":
