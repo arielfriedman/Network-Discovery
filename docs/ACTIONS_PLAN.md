@@ -90,3 +90,18 @@ hosts) are next.
   confirmation. Every create / edit / run / stop is in the activity log.
 - Not yet: reordering by drag (drag is used for combining), interactive
   input, remote hosts.
+
+## Resume here (2026-10-14)
+
+Stage 5 brought forward: user wants to **open a connection to a device first, then run actions on it**.
+- Written, not wired, committed as WIP: `panel/action_targets.py` (paramiko SSH: connect with password /
+  pasted key / key file, host-key pinning like the device wizard (`NeedsTrust`), distro probe, `run_step`
+  with `sudo -S -p <random marker>` answered from memory, `known()` = previous targets + SSH hosts from scans).
+- Still to do: (1) `actions.distro_from(info)` (split out of `distro()`); (2) migration `011_action_targets.sql`
+  (host, port, username, fingerprint, distro, last_used; UNIQUE(host, port, username)); (3) `actions.start(..., target_id)`
+  -> run steps via `action_targets.run_step`, resolve variants for the target's distro, record host in
+  `action_runs.target`; `list_actions(target)`; (4) API: `/api/actions/targets` (list, known, connect, disconnect,
+  forget); (5) UI: target picker above the output + Connect dialog (suggest scanned SSH hosts, fingerprint
+  confirm step, sudo password option); (6) tests: test sshd on 127.0.0.1:2222 (key auth), fake `sudo` on PATH to
+  check the marker/password feed, pin mismatch, stop; then DEVLOG + commit.
+- After that: stage 4 (interactive terminal).

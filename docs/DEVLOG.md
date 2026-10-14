@@ -32,6 +32,11 @@ Entry template:
 
 ---
 
+## 2026-10-14 - Actions: remote targets started (WIP, not wired)
+**Change:** `panel/action_targets.py` added (not imported yet). User asked
+that actions run on a device they connect to first. Next steps are listed in
+`docs/ACTIONS_PLAN.md` under "Resume here". Nothing tested yet.
+
 ## 2026-10-14 - Actions page, stages 1-3
 **Change:** new *Actions* tab (`panel/web/actions.html`, `panel/actions.py`,
 migration `010_actions.sql`, endpoints under `/api/actions`). Details in
