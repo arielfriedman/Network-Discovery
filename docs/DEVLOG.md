@@ -32,6 +32,51 @@ Entry template:
 
 ---
 
+## 2026-10-14 - Device read-only mode; FortiGate facts for production use (ddb0a8b)
+**Change:** devices are **read-only by default** (migration
+`009_device_read_only.sql`, also for devices already added): connect,
+overview, backups and previews work; `apply` and `rollback` are refused
+(the preview is kept, so it can be applied after switching).
+`set_read_only` - switching it off needs the device name typed back;
+`POST /api/devices/<id>/mode`; banner + *Allow changes…* / *Back to
+read-only* on the device page, badge in the list, Apply disabled with an
+explanation; activity log `device.read_only.on|off`.
+`docs/FORTIGATE_FIRST_CONTACT.md`: read-only REST API admin on the
+FortiGate (GUI steps, CLI marked [verify]), trusted host = panel only,
+read-only first connection, what to report back, the later path to
+changes. Catalog / `DEVICE_MODELS.md` updated for FortiOS 8.0.
+**Why:** the user wants the device wizard tested on real hardware next;
+they have FG-100F and FG-200E units, none lab or spare, so the first real
+contact must not be able to change anything - enforced by the panel and,
+independently, by the token's FortiGate profile.
+**Research (official Fortinet docs, 2026-10-14):** FortiOS 8.0.1 build
+0245 supports FG-100F and FG-200E (also 7.6.7); 8.0 API is token-only,
+token in the header, REST API admin trusted hosts may not be 0.0.0.0/0;
+FortiGate-VM permanent trial (since 7.2.1): 1 vCPU / 2 GB, 3 interfaces /
+policies / routes, one per FortiCloud account - a possible free lab on
+Proxmox.
+**Issues / errors:**
+- **Correction:** `DEVICE_MODELS.md` and the catalog said the 200E reached
+  end of sale in Oct 2025 (from the first research round, not re-checked).
+  No end-of-order notice could be found now; the Fortinet community says
+  none is scheduled, and 8.0.1 still supports it. Fixed, with sources.
+- Whether the config-backup endpoint is GET or POST on 8.0 is not
+  documented publicly; the driver already falls back from GET to POST.
+  Marked [verify].
+- This DEVLOG entry missed commit ddb0a8b: its anchor heading no longer
+  matched because the side-note agent had added the process note below;
+  added afterwards.
+- Test setup: the scratch DB still had an old test device at 127.0.0.1
+  (devices are unique by address), and the address wizard's field is
+  `subnet`, not `value` - test fixes, no product change.
+**Verified (FortiGate simulator + scratch Postgres):** new device
+read-only; backup allowed; apply refused and nothing reached the
+simulator; wrong name refused; after switching, the same preview applied;
+rollback refused while read-only, allowed after switching back; activity
+log entries; screenshot of the banner.
+**Not verified:** anything on a real FortiGate - next step is the user's
+read-only first contact.
+
 ## 2026-10-14 - Process note: two agents committed in the same checkout
 While the host-profile work was being finished, a second agent (started for
 the Actions page idea, `docs/ACTIONS_PLAN.md`) committed the whole working
