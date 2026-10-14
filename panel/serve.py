@@ -35,6 +35,7 @@ from scanner import ScanSession, ScanOrchestrator, MODULE_REGISTRY
 from reporters import generate_dashboard
 import db
 import db_backup
+import actions as act
 import targets as tg
 import creds as credmod        # discovery/lib/creds.py (path set up by targets)
 from devices import manager as devmgr
@@ -46,7 +47,7 @@ REPORTS = APP_DIR / "reports"
 REPORTS.mkdir(exist_ok=True)
 WEB = APP_DIR / "web"          # the browser pages
 PAGES = {"/": "index.html", "/index.html": "index.html",
-         "/history": "history.html", "/devices": "devices.html"}
+         "/history": "history.html", "/devices": "devices.html", "/actions": "actions.html"}
 CTYPES = {".html": "text/html; charset=utf-8", ".css": "text/css; charset=utf-8",
           ".js": "text/javascript; charset=utf-8", ".svg": "image/svg+xml"}
 ND_DIR = APP_DIR.parent / "discovery"  # network/cloud tool, same repo
@@ -561,6 +562,12 @@ class Handler(BaseHTTPRequestHandler):
         except ValueError:
             return {}
 
+    def _act(self, fn):
+        try:
+            return self._send(200, fn())
+        except (act.ActionError, ValueError, TypeError) as e:
+            return self._send(400, {"error": str(e)})
+
     def _device_call(self, fn):
         """Run a device-manager call and map its errors to HTTP answers."""
         try:
@@ -598,6 +605,17 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200 if got else 404, got or {"error": "not found"})
         if path == "/api/activity":
             return self._send(200, db.recent_activity(100))
+        if path == "/api/actions":
+            return self._act(lambda: act.list_actions())
+        if path == "/api/actions/runs":
+            return self._act(lambda: {"runs": act.recent_runs(), "active": act.active_run()})
+        if path == "/api/actions/export":
+            return self._act(act.export_all)
+        m = re.match(r"^/api/actions/runs/(\d+)$", path)
+        if m:
+            off = re.search(r"[?&]from=(\d+)", self.path)
+            st = act.run_status(int(m.group(1)), int(off.group(1)) if off else 0)
+            return self._send(200 if st else 404, st or {"error": "run not found (finished runs are listed in /api/actions/runs)"})
         if path == "/api/db/backups":
             return self._send(200, {"backups": db_backup.list_backups(), "keep": db_backup.keep_count(),
                                     "schedule": db_backup.schedule_status(), "db": db.ready()})
@@ -687,6 +705,26 @@ class Handler(BaseHTTPRequestHandler):
                                             "older_than_days": days, "all": body.get("all") is True},
                    self.client_address[0])
             return self._send(200, {"deleted": len(deleted), "files_removed": files})
+        if path.startswith("/api/actions/"):
+            b, what = self._body(), path[len("/api/actions/"):]
+            ip = self.client_address[0]
+            calls = {
+                "save": lambda: act.save(b),
+                "delete": lambda: act.delete(int(b.get("id") or 0)),
+                "combine": lambda: act.combine(int(b.get("first") or 0), int(b.get("second") or 0), str(b.get("name") or "")),
+                "parse": lambda: {"steps": act.parse_text(str(b.get("text") or "")),
+                                  "dangerous": act.is_dangerous(act.parse_text(str(b.get("text") or "")))},
+                "reorder": lambda: act.reorder([int(x) for x in (b.get("ids") or [])]),
+                "restore": act.restore_builtins,
+                "import": lambda: act.import_all(b.get("doc")),
+                "run": lambda: act.start(int(b.get("id") or 0), b.get("confirm_dangerous") is True, ip),
+            }
+            m = re.match(r"^runs/(\d+)/stop$", what)
+            if m:
+                return self._act(lambda: act.stop(int(m.group(1))))
+            if what not in calls:
+                return self._send(404, {"error": "not found"})
+            return self._act(calls[what])
         if path == "/api/db/backups/run":
             r = db_backup.run_backup()
             return self._send(200 if r["ok"] else 500, r if r["ok"] else {"error": r["error"]})
@@ -806,6 +844,7 @@ def main():
             new = db.migrate()
             print("  database: ready" + (f" (applied {', '.join(new)})" if new else ""))
             stale = db.mark_interrupted()
+            act.mark_interrupted()
             if stale:
                 print(f"  database: {stale} scan(s) from an earlier run marked interrupted")
         except Exception as e:  # noqa: BLE001

@@ -1,7 +1,8 @@
 # Actions page (planned)
 
-Status: idea agreed 2026-10-14, not started. Scheduled after the firewall
-wizard real-hardware work.
+Status: stages 1-3 built 2026-10-14 (`panel/actions.py`, `panel/web/actions.html`,
+migration `010_actions.sql`). Stage 4 (interactive terminal) and 5 (remote
+hosts) are next.
 
 ## What the user asked for
 
@@ -64,3 +65,28 @@ wizard real-hardware work.
 3. Drag-to-combine, editor, folders, import / export.
 4. Full interactive terminal (xterm.js + WebSocket / long-poll).
 5. Run on remote hosts through SSH credential cards, results per host.
+
+## Built (stages 1-3)
+
+- 31 starter actions in 10 folders (Packages, System, Services, Logs, Disks,
+  Network, Firewall, Docker, Kubernetes, Power); package and firewall actions
+  have variants for the debian, rhel, suse, arch and alpine families
+  (openSUSE Tumbleweed upgrades with `zypper dup`). Detected from
+  `/etc/os-release`; actions with no command for this machine are greyed out.
+- Run: the exact commands are shown first; *Run* starts them; output streams
+  into the right pane; *Stop* kills the step's process group; 30-minute
+  limit per step; one run at a time; recent runs listed with exit codes
+  (tables `action_runs`, `action_run_steps`, last 256 KB of output per step).
+- `sudo` inside a step runs as `sudo -n`: no prompt that nobody can answer;
+  the output says to run `sudo -v` in the panel's terminal. Stage 4 will take
+  passwords in the terminal itself.
+- The panel's database settings are removed from the actions' environment.
+- New action by pasting (one per line, `\` continues, `#` comments); edit,
+  delete (a deleted starter action stays deleted; *Restore starter actions*
+  brings them back), folders, search, drag one action onto another to
+  combine (a new action; originals stay), export / import JSON.
+- Destructive commands (rm -r, reboot, mkfs, dd, prune, kubectl delete, ...)
+  mark the action dangerous automatically; dangerous actions need a ticked
+  confirmation. Every create / edit / run / stop is in the activity log.
+- Not yet: reordering by drag (drag is used for combining), interactive
+  input, remote hosts.

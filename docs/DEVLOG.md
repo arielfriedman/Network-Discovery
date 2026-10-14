@@ -32,6 +32,40 @@ Entry template:
 
 ---
 
+## 2026-10-14 - Actions page, stages 1-3
+**Change:** new *Actions* tab (`panel/web/actions.html`, `panel/actions.py`,
+migration `010_actions.sql`, endpoints under `/api/actions`). Details in
+`docs/ACTIONS_PLAN.md` ("Built").
+**Why:** user asked to start the Actions page now (plan agreed earlier:
+command menu left, output right, paste commands into buttons, drag to
+combine, works across distros).
+**Decisions:** one run at a time; steps run through `bash -o pipefail -c`
+in their own process group (Stop kills nmap-style children too); `sudo`
+becomes `sudo -n` so a password prompt can't hang the run; database
+settings stripped from the environment; editing a starter action keeps only
+this machine's variant (the editor says so); deleting a starter action
+hides it (otherwise it would come back on the next load).
+**Issues / errors:**
+- Pasted lines ending in `\` kept the indentation of the next line
+  (`apt list    --upgradable`) -> joined with one space.
+- A blank line before the first command in the output -> only between steps.
+- Test mistake: "did the stopped run still print `end`?" matched the echoed
+  command line (`$ echo start; sleep 30; echo end`); the recorded exit code
+  -15 shows the step was killed.
+**Verified (scratch Postgres, Linux Mint 22.3):** migration 010; 31 starter
+actions / 10 folders; variant resolution for Mint (debian), Rocky (rhel),
+Tumbleweed (`zypper dup`), Arch, Alpine; paste parsing (comments,
+continuations); save; destructive command auto-flagged; combine; run with
+stop at first failure (exit codes 0, 1); dangerous action refused without
+confirmation; `sudo true` fails at once with the hint; second run refused
+while one runs; Stop -> status stopped, exit -15; no SENTINEL_/PG variables
+in the action environment; runs recorded. Panel API: run without token 403,
+paste-save, run with live output, export / import (name made unique).
+Browser: running a starter action through the confirmation, and the
+combine dialog after dragging one action onto another (screenshots).
+**Not verified:** the non-debian variants on real Rocky / openSUSE / Arch /
+Alpine machines (resolution only); long-running real upgrades.
+
 ## 2026-10-14 - Pre-public cleanup: backup-drive path removed (38e37f4)
 **Change:** `docs/INTEGRATION_PLAN.md` no longer names the backup drive's
 folder path. **Still to do before going public:** the path remains in older

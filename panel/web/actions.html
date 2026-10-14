@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SentinelScan Actions</title>
+<link rel="stylesheet" href="/web/style.css">
+<script src="/web/common.js" defer></script>
+</head>
+<body><div class="wrap wide">
+  <header><h1>Actions</h1>
+    <div class="sub">Saved commands for this machine. Click to run, drag one action onto another to combine them, or paste your own.
+      <span id="distro" class="muted"></span></div>
+  </header>
+  <div id="nodb" class="note" style="display:none"></div>
+
+  <div class="act-layout">
+    <section class="act-left">
+      <div class="act-tools">
+        <button class="btn" id="newBtn">New action</button>
+        <input id="find" type="search" placeholder="Find an action…">
+      </div>
+      <div id="tree"></div>
+      <div class="act-tools small">
+        <button class="btn ghost" id="exportBtn">Export</button>
+        <label class="btn ghost filebtn2">Import<input type="file" id="importFile" accept=".json,application/json"></label>
+        <button class="btn ghost" id="restoreBtn" style="display:none">Restore starter actions</button>
+      </div>
+    </section>
+
+    <section class="act-right">
+      <div class="term-head">
+        <span id="termTitle">Output</span>
+        <span class="pill" id="termState" style="display:none"><span class="dot"></span><span></span></span>
+        <span class="spacer"></span>
+        <button class="btn ghost" id="stopBtn" style="display:none">Stop</button>
+        <button class="btn ghost" id="clearBtn">Clear</button>
+      </div>
+      <div id="confirmBox" class="confirm" style="display:none"></div>
+      <pre id="term" class="term">Pick an action on the left. Its exact commands are shown here before anything runs.</pre>
+      <h2>Recent runs</h2>
+      <div class="tbl-wrap"><table class="data">
+        <thead><tr><th>When</th><th>Action</th><th>Result</th><th>Steps (exit code)</th></tr></thead>
+        <tbody id="runRows"></tbody></table></div>
+    </section>
+  </div>
+
+  <div class="modal" id="editModal" style="display:none"><div class="modal-box">
+    <h2 id="editTitle">New action</h2>
+    <label class="cf wide"><span>Name</span><input id="eName" placeholder="e.g. Update and upgrade"></label>
+    <label class="cf wide"><span>Folder</span><input id="eFolder" list="folderList" placeholder="e.g. Maintenance"></label>
+    <datalist id="folderList"></datalist>
+    <label class="cf wide"><span>Commands: paste one or many, one per line (a line ending in \ continues; # lines are comments)</span>
+      <textarea id="eSteps" rows="8" spellcheck="false" placeholder="sudo apt update&#10;sudo apt upgrade -y"></textarea></label>
+    <div id="eNote" class="muted"></div>
+    <div id="ePreview" class="muted"></div>
+    <label class="chk"><input type="checkbox" id="eStop" checked> Stop at the first failing command</label>
+    <label class="chk"><input type="checkbox" id="eDanger"> Dangerous: ask for an extra confirmation before running</label>
+    <div class="row-btns"><button class="btn" id="eSave">Save</button>
+      <button class="btn ghost" id="eCancel">Cancel</button>
+      <button class="btn ghost danger-text" id="eDelete" style="display:none">Delete</button>
+      <span id="eMsg" class="bad-text"></span></div>
+  </div></div>
+
+  <div class="modal" id="combineModal" style="display:none"><div class="modal-box">
+    <h2>Combine actions</h2>
+    <div id="cWhat" class="muted"></div>
+    <label class="cf wide"><span>Name for the combined action</span><input id="cName"></label>
+    <div class="row-btns"><button class="btn" id="cSave">Create</button><button class="btn ghost" id="cCancel">Cancel</button>
+      <span id="cMsg" class="bad-text"></span></div>
+  </div></div>
+</div>
+<script>
+document.addEventListener("DOMContentLoaded", () => {
+  const $ = id => document.getElementById(id);
+  let DATA = null, editing = null, dragId = null, runId = null, offset = 0, pollT = null;
+  const open = JSON.parse((() => { try { return localStorage.getItem("sentinel-act-open") || "{}"; } catch (e) { return "{}"; } })());
+
+  async function load() {
+    try { DATA = await api("/api/actions"); }
+    catch (e) { $("nodb").style.display = "block"; $("nodb").textContent = e.message; return; }
+    $("distro").textContent = ` Detected: ${DATA.distro.pretty}` + (DATA.distro.family ? ` (${DATA.distro.family} family).` : ".");
+    $("restoreBtn").style.display = DATA.hidden_builtins ? "" : "none";
+    $("folderList").innerHTML = DATA.folders.map(f => `<option value="${esc(f.name)}">`).join("");
+    render(); loadRuns();
+  }
+
+  function render() {
+    const q = $("find").value.trim().toLowerCase();
+    const groups = [...DATA.folders.map(f => ({ id: f.id, name: f.name })), { id: null, name: "Other" }];
+    $("tree").innerHTML = groups.map(g => {
+      const items = DATA.actions.filter(a => a.folder_id === g.id &&
+        (!q || a.name.toLowerCase().includes(q) || a.steps.some(s => (s.here || "").toLowerCase().includes(q))));
+      if (!items.length) return "";
+      const isOpen = q || open[g.name] !== false;
+      return `<details class="fold" ${isOpen ? "open" : ""} data-fold="${esc(g.name)}"><summary>${esc(g.name)} <span class="muted">${items.length}</span></summary>` +
+        items.map(a => `<div class="act ${a.available ? "" : "na"}" draggable="true" data-id="${a.id}"
+            title="${esc(a.steps.map(s => s.here || "(not available here)").join("\n"))}">
+          <button class="act-run" data-run="${a.id}" ${a.available ? "" : "disabled"}>▶</button>
+          <span class="act-name">${esc(a.name)}</span>
+          ${a.dangerous ? '<span class="badge new">dangerous</span>' : ""}
+          ${a.steps.length > 1 ? `<span class="muted">${a.steps.length} steps</span>` : ""}
+          <button class="act-edit" data-edit="${a.id}" title="Edit">✎</button></div>`).join("") + `</details>`;
+    }).join("") || '<div class="empty">No action matches.</div>';
+    document.querySelectorAll(".fold").forEach(d => d.addEventListener("toggle", () => {
+      open[d.dataset.fold] = d.open; try { localStorage.setItem("sentinel-act-open", JSON.stringify(open)); } catch (e) {}
+    }));
+    document.querySelectorAll("[data-run]").forEach(b => b.onclick = () => prepare(+b.dataset.run));
+    document.querySelectorAll("[data-edit]").forEach(b => b.onclick = () => edit(+b.dataset.edit));
+    document.querySelectorAll(".act").forEach(el => {
+      el.addEventListener("dragstart", e => { dragId = +el.dataset.id; e.dataTransfer.setData("text/plain", el.dataset.id); el.classList.add("dragging"); });
+      el.addEventListener("dragend", () => { el.classList.remove("dragging"); document.querySelectorAll(".drop").forEach(x => x.classList.remove("drop")); });
+      el.addEventListener("dragover", e => { if (dragId && dragId !== +el.dataset.id) { e.preventDefault(); el.classList.add("drop"); } });
+      el.addEventListener("dragleave", () => el.classList.remove("drop"));
+      el.addEventListener("drop", e => { e.preventDefault(); el.classList.remove("drop"); combineAsk(dragId, +el.dataset.id); });
+    });
+  }
+  $("find").oninput = render;
+  const byId = id => DATA.actions.find(a => a.id === id);
+
+  // ── run: show exact commands, then confirm ───────────────────────────────
+  function prepare(id) {
+    const a = byId(id), steps = a.steps.map(s => s.here).filter(Boolean);
+    $("termTitle").textContent = a.name;
+    $("confirmBox").style.display = "block";
+    $("confirmBox").innerHTML = `<div><b>About to run on ${esc(DATA.distro.pretty)}:</b></div>
+      <ol>${steps.map(s => `<li><code>${esc(s)}</code></li>`).join("")}</ol>
+      ${a.dangerous ? '<label class="chk"><input type="checkbox" id="dangerOk"> This action is marked dangerous. I want to run it.</label>' : ""}
+      <div class="row-btns"><button class="btn" id="goBtn">Run</button><button class="btn ghost" id="noBtn">Cancel</button>
+      <span class="muted">${a.stop_on_error ? "Stops at the first failing command." : "Runs every command even if one fails."}</span></div>`;
+    $("noBtn").onclick = () => { $("confirmBox").style.display = "none"; };
+    $("goBtn").onclick = async () => {
+      if (a.dangerous && !$("dangerOk").checked) { alert("Tick the box to confirm."); return; }
+      let r;
+      try { r = await api("/api/actions/run", { id, confirm_dangerous: a.dangerous }); }
+      catch (e) { $("confirmBox").insertAdjacentHTML("beforeend", `<div class="bad-text">${esc(e.message)}</div>`); return; }
+      $("confirmBox").style.display = "none";
+      runId = r.run_id; offset = 0; $("term").textContent = ""; poll();
+    };
+  }
+  async function poll() {
+    clearTimeout(pollT);
+    let st;
+    try { st = await (await fetch(`/api/actions/runs/${runId}?from=${offset}`)).json(); } catch (e) { pollT = setTimeout(poll, 1500); return; }
+    if (st.reset) { $("term").textContent = ""; }
+    if (st.text) { const t = $("term"); const atEnd = t.scrollTop + t.clientHeight >= t.scrollHeight - 30;
+      t.textContent += st.text; if (atEnd) t.scrollTop = t.scrollHeight; }
+    offset = st.offset;
+    const s = $("termState"); s.style.display = ""; s.className = "pill " + ({ ok: "ok", failed: "bad", stopped: "bad" }[st.status] || "");
+    s.lastChild.textContent = { running: "running…", ok: "finished", failed: "failed", stopped: "stopped" }[st.status] || st.status;
+    $("stopBtn").style.display = st.status === "running" ? "" : "none";
+    if (st.status === "running") pollT = setTimeout(poll, 500); else loadRuns();
+  }
+  $("stopBtn").onclick = () => runId && api(`/api/actions/runs/${runId}/stop`, {}).catch(() => {});
+  $("clearBtn").onclick = () => { $("term").textContent = ""; $("confirmBox").style.display = "none"; };
+
+  async function loadRuns() {
+    let r; try { r = await api("/api/actions/runs"); } catch (e) { return; }
+    $("runRows").innerHTML = r.runs.length ? r.runs.map(x => `<tr><td>${esc(fmtTime(x.started_at))}</td><td>${esc(x.action_name)}</td>
+      <td><span class="badge ${x.status === "ok" ? "" : "new"}">${esc(x.status)}</span></td>
+      <td class="muted">${(x.steps || []).map(s => `<code title="${esc(s.command)}">${esc(s.command.slice(0, 40))}</code> ${s.exit}`).join(" · ")}</td></tr>`).join("")
+      : '<tr><td colspan="4" class="empty">Nothing has run yet.</td></tr>';
+    if (r.active && !runId) { runId = r.active; offset = 0; poll(); }
+  }
+
+  // ── create / edit ────────────────────────────────────────────────────────
+  let parseT = null;
+  function edit(id) {
+    editing = id ? byId(id) : null;
+    $("editTitle").textContent = editing ? "Edit action" : "New action";
+    $("eName").value = editing ? editing.name : "";
+    $("eFolder").value = editing ? ((DATA.folders.find(f => f.id === editing.folder_id) || {}).name || "") : "";
+    $("eSteps").value = editing ? editing.steps.map(s => s.here || s.command).join("\n") : "";
+    $("eStop").checked = editing ? editing.stop_on_error : true;
+    $("eDanger").checked = editing ? editing.dangerous : false;
+    $("eDelete").style.display = editing ? "" : "none";
+    $("eNote").textContent = editing && editing.steps.some(s => s.variants)
+      ? "This starter action has a version for each Linux family. Saving keeps only the commands shown here (the ones for this machine)." : "";
+    $("eMsg").textContent = ""; $("ePreview").textContent = "";
+    $("editModal").style.display = "flex"; $("eName").focus(); previewSteps();
+  }
+  async function previewSteps() {
+    try {
+      const r = await api("/api/actions/parse", { text: $("eSteps").value });
+      $("ePreview").innerHTML = r.steps.length ? `${r.steps.length} command(s) will run in this order` +
+        (r.dangerous ? ' · <span class="bad-text">contains a destructive command: it will ask for confirmation</span>' : "") : "";
+      $("eMsg").textContent = "";
+    } catch (e) { $("ePreview").textContent = ""; $("eMsg").textContent = e.message; }
+  }
+  $("eSteps").oninput = () => { clearTimeout(parseT); parseT = setTimeout(previewSteps, 300); };
+  $("eCancel").onclick = () => { $("editModal").style.display = "none"; };
+  $("newBtn").onclick = () => edit(null);
+  $("eSave").onclick = async () => {
+    const body = { name: $("eName").value, folder: $("eFolder").value, steps: $("eSteps").value,
+                   stop_on_error: $("eStop").checked, dangerous: $("eDanger").checked };
+    if (editing) body.id = editing.id;
+    try { const r = await api("/api/actions/save", body);
+      if (r.auto_flagged) alert("Marked dangerous: it contains a command that can remove data or interrupt the machine.");
+      $("editModal").style.display = "none"; load(); }
+    catch (e) { $("eMsg").textContent = e.message; }
+  };
+  $("eDelete").onclick = async () => {
+    if (!editing || !confirm(`Delete "${editing.name}"?`)) return;
+    try { await api("/api/actions/delete", { id: editing.id }); $("editModal").style.display = "none"; load(); }
+    catch (e) { $("eMsg").textContent = e.message; }
+  };
+
+  // ── combine (drag onto) ──────────────────────────────────────────────────
+  let combining = null;
+  function combineAsk(first, second) {
+    if (!first || !second || first === second) return;
+    const a = byId(first), b = byId(second);
+    combining = [first, second];
+    $("cWhat").innerHTML = `Runs <b>${esc(a.name)}</b> (${a.steps.length} step${a.steps.length > 1 ? "s" : ""}), then <b>${esc(b.name)}</b>
+      (${b.steps.length} step${b.steps.length > 1 ? "s" : ""}). Both originals stay.`;
+    $("cName").value = `${a.name} + ${b.name}`; $("cMsg").textContent = "";
+    $("combineModal").style.display = "flex"; $("cName").select();
+  }
+  $("cCancel").onclick = () => { $("combineModal").style.display = "none"; };
+  $("cSave").onclick = async () => {
+    try { await api("/api/actions/combine", { first: combining[0], second: combining[1], name: $("cName").value });
+      $("combineModal").style.display = "none"; load(); }
+    catch (e) { $("cMsg").textContent = e.message; }
+  };
+
+  // ── import / export / restore ────────────────────────────────────────────
+  $("exportBtn").onclick = async () => {
+    const doc = await api("/api/actions/export");
+    const url = URL.createObjectURL(new Blob([JSON.stringify(doc, null, 2)], { type: "application/json" }));
+    const a = document.createElement("a"); a.href = url; a.download = "sentinelscan-actions.json"; a.click();
+  };
+  $("importFile").onchange = async ev => {
+    const f = ev.target.files[0]; if (!f) return;
+    try { const r = await api("/api/actions/import", { doc: JSON.parse(await f.text()) }); alert(`Imported ${r.imported} action(s).`); load(); }
+    catch (e) { alert("Import failed: " + e.message); }
+    ev.target.value = "";
+  };
+  $("restoreBtn").onclick = async () => { await api("/api/actions/restore", {}); load(); };
+  document.addEventListener("keydown", e => { if (e.key === "Escape") document.querySelectorAll(".modal").forEach(m => m.style.display = "none"); });
+
+  load();
+});
+</script>
+</body></html>

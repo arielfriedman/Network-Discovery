@@ -1,7 +1,7 @@
 // Shared by every panel page: top navigation, theme toggle, database status pill.
 (function () {
   const here = location.pathname === "/index.html" ? "/" : location.pathname;
-  const tabs = [["/", "Scan"], ["/history", "History"], ["/devices", "Devices"]];
+  const tabs = [["/", "Scan"], ["/history", "History"], ["/devices", "Devices"], ["/actions", "Actions"]];
   const nav = document.createElement("nav");
   nav.className = "top";
   nav.innerHTML = '<span class="brand">SentinelScan</span>' +
