@@ -313,7 +313,7 @@
   $("charts").innerHTML =
     barChart("Most common open ports", "How many hosts expose each port", D.top_ports || [], "host") +
     barChart("Hardware vendors", "From the MAC address prefix", D.vendors || [], "device") +
-    barChart("Operating systems", "nmap fingerprint, best guess", D.os_families || [], "host");
+    barChart("Operating systems", "Best guess: nmap fingerprint, service banners or SSH login", D.os_families || [], "host");
 
   document.querySelectorAll(".row[data-tip]").forEach((row) => {
     row.addEventListener("mousemove", (e) => showTip(row.dataset.tip, e));
