@@ -36,6 +36,7 @@ from reporters import generate_dashboard
 import db
 import db_backup
 import actions as act
+import action_targets as atg
 import targets as tg
 import creds as credmod        # discovery/lib/creds.py (path set up by targets)
 from devices import manager as devmgr
@@ -565,6 +566,8 @@ class Handler(BaseHTTPRequestHandler):
     def _act(self, fn):
         try:
             return self._send(200, fn())
+        except atg.NeedsTrust as e:
+            return self._send(409, {"error": str(e), "needs_trust": e.fingerprint, "changed_from": e.changed_from})
         except (act.ActionError, ValueError, TypeError) as e:
             return self._send(400, {"error": str(e)})
 
@@ -606,7 +609,10 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/activity":
             return self._send(200, db.recent_activity(100))
         if path == "/api/actions":
-            return self._act(lambda: act.list_actions())
+            tid = re.search(r"[?&]target=([0-9a-f]{1,20})", self.path)
+            return self._act(lambda: act.list_actions(tid.group(1) if tid else None))
+        if path == "/api/actions/targets":
+            return self._act(lambda: {"open": atg.list_open(), **atg.known()})
         if path == "/api/actions/runs":
             return self._act(lambda: {"runs": act.recent_runs(), "active": act.active_run()})
         if path == "/api/actions/export":
@@ -717,7 +723,11 @@ class Handler(BaseHTTPRequestHandler):
                 "reorder": lambda: act.reorder([int(x) for x in (b.get("ids") or [])]),
                 "restore": act.restore_builtins,
                 "import": lambda: act.import_all(b.get("doc")),
-                "run": lambda: act.start(int(b.get("id") or 0), b.get("confirm_dangerous") is True, ip),
+                "run": lambda: act.start(int(b.get("id") or 0), b.get("confirm_dangerous") is True, ip,
+                                         str(b.get("target") or "") or None),
+                "targets/connect": lambda: atg.connect(b),
+                "targets/disconnect": lambda: atg.disconnect(str(b.get("id") or "")),
+                "targets/forget": lambda: atg.forget(str(b.get("host") or ""), int(b.get("port") or 22)),
             }
             m = re.match(r"^runs/(\d+)/stop$", what)
             if m:

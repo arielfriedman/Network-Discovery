@@ -1,8 +1,8 @@
 # Actions page (planned)
 
 Status: stages 1-3 built 2026-10-14 (`panel/actions.py`, `panel/web/actions.html`,
-migration `010_actions.sql`). Stage 4 (interactive terminal) and 5 (remote
-hosts) are next.
+migration `010_actions.sql`). Stage 5 (remote hosts over SSH) built 2026-10-14
+(see "Remote targets"). Stage 4 (interactive terminal) is next.
 
 ## What the user asked for
 
@@ -91,17 +91,29 @@ hosts) are next.
 - Not yet: reordering by drag (drag is used for combining), interactive
   input, remote hosts.
 
-## Resume here (2026-10-14)
+## Remote targets (built 2026-10-14)
 
-Stage 5 brought forward: user wants to **open a connection to a device first, then run actions on it**.
-- Written, not wired, committed as WIP: `panel/action_targets.py` (paramiko SSH: connect with password /
-  pasted key / key file, host-key pinning like the device wizard (`NeedsTrust`), distro probe, `run_step`
-  with `sudo -S -p <random marker>` answered from memory, `known()` = previous targets + SSH hosts from scans).
-- Still to do: (1) `actions.distro_from(info)` (split out of `distro()`); (2) migration `011_action_targets.sql`
-  (host, port, username, fingerprint, distro, last_used; UNIQUE(host, port, username)); (3) `actions.start(..., target_id)`
-  -> run steps via `action_targets.run_step`, resolve variants for the target's distro, record host in
-  `action_runs.target`; `list_actions(target)`; (4) API: `/api/actions/targets` (list, known, connect, disconnect,
-  forget); (5) UI: target picker above the output + Connect dialog (suggest scanned SSH hosts, fingerprint
-  confirm step, sudo password option); (6) tests: test sshd on 127.0.0.1:2222 (key auth), fake `sudo` on PATH to
-  check the marker/password feed, pin mismatch, stop; then DEVLOG + commit.
-- After that: stage 4 (interactive terminal).
+Actions can run on another machine over SSH. "Connect to a machine…" opens a dialog:
+address (suggests machines used before and SSH hosts from scans), port, user, and
+login by password, pasted private key or key file. The first time, the panel shows the
+machine's SSH host key fingerprint and only connects after you confirm it; the
+fingerprint is then pinned, and a changed key is refused until you confirm again.
+After connecting, "Run on" switches to that machine: the distro is read from its
+`/etc/os-release`, so each action shows the commands for *that* machine.
+
+- Secrets (password, key, passphrase, sudo password) live only in the panel's memory
+  while connected; Disconnect (or a panel restart) drops them. The database
+  (`action_targets`, migration 011) keeps host, port, user, fingerprint, distro, last use.
+- sudo: with a sudo password, `sudo` becomes `sudo -S -p <random marker>` and the panel
+  answers the prompt over the SSH session. Echo is off on the remote pty and the
+  password is also scrubbed from the output. A wrong password stops the step after one try.
+  Without a sudo password, `sudo -n` fails at once with a hint.
+- Stop closes the SSH channel; the remote command gets the hang-up and ends.
+- Recent runs show where each action ran (`action_runs.target`).
+- Code: `panel/action_targets.py`, `actions.start(..., target_id)`, API
+  `GET /api/actions/targets`, `POST /api/actions/targets/{connect,disconnect,forget}`,
+  `GET /api/actions?target=<id>`.
+
+## Resume here
+
+Next: stage 4 (interactive terminal).

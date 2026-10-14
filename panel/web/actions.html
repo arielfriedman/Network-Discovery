@@ -7,10 +7,16 @@
 </head>
 <body><div class="wrap wide">
   <header><h1>Actions</h1>
-    <div class="sub">Saved commands for this machine. Click to run, drag one action onto another to combine them, or paste your own.
+    <div class="sub">Saved commands for this machine or one you connect to over SSH. Click to run, drag one action onto another to combine them, or paste your own.
       <span id="distro" class="muted"></span></div>
   </header>
   <div id="nodb" class="note" style="display:none"></div>
+  <div class="tgt-bar">
+    <label>Run on <select id="tgtSel"><option value="">this machine</option></select></label>
+    <button class="btn ghost" id="connBtn">Connect to a machine…</button>
+    <button class="btn ghost" id="discBtn" style="display:none">Disconnect</button>
+    <span id="tgtInfo" class="muted"></span>
+  </div>
 
   <div class="act-layout">
     <section class="act-left">
@@ -38,7 +44,7 @@
       <pre id="term" class="term">Pick an action on the left. Its exact commands are shown here before anything runs.</pre>
       <h2>Recent runs</h2>
       <div class="tbl-wrap"><table class="data">
-        <thead><tr><th>When</th><th>Action</th><th>Result</th><th>Steps (exit code)</th></tr></thead>
+        <thead><tr><th>When</th><th>Action</th><th>Where</th><th>Result</th><th>Steps (exit code)</th></tr></thead>
         <tbody id="runRows"></tbody></table></div>
     </section>
   </div>
@@ -60,6 +66,29 @@
       <span id="eMsg" class="bad-text"></span></div>
   </div></div>
 
+  <div class="modal" id="connModal" style="display:none"><div class="modal-box">
+    <h2>Connect to a machine</h2>
+    <p class="muted">Over SSH. The password or key stays in the panel's memory while connected and is never saved.</p>
+    <label class="cf wide"><span>Address</span><input id="kHost" list="hostList" placeholder="e.g. 172.16.0.37"></label>
+    <datalist id="hostList"></datalist>
+    <label class="cf"><span>Port</span><input id="kPort" type="number" value="22" min="1" max="65535"></label>
+    <label class="cf"><span>User</span><input id="kUser" autocomplete="off" placeholder="e.g. pi"></label>
+    <label class="cf wide"><span>Log in with</span><select id="kAuth">
+      <option value="password">Password</option><option value="key">Pasted private key</option>
+      <option value="key_path">Key file on this machine</option></select></label>
+    <label class="cf wide" id="kPwRow"><span>Password</span><input id="kPw" type="password" autocomplete="off"></label>
+    <label class="cf wide" id="kKeyRow" style="display:none"><span>Private key</span>
+      <textarea id="kKey" rows="5" spellcheck="false" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"></textarea></label>
+    <label class="cf wide" id="kPathRow" style="display:none"><span>Key file</span><input id="kPath" placeholder="~/.ssh/id_ed25519"></label>
+    <label class="cf wide" id="kPassRow" style="display:none"><span>Key passphrase (if any)</span><input id="kPass" type="password" autocomplete="off"></label>
+    <label class="chk" id="kSameRow"><input type="checkbox" id="kSame" checked> Use the login password for sudo</label>
+    <label class="chk" id="kSudoRow" style="display:none"><input type="checkbox" id="kSudo"> Use a sudo password</label>
+    <label class="cf wide" id="kSudoPwRow" style="display:none"><span>sudo password</span><input id="kSudoPw" type="password" autocomplete="off"></label>
+    <div id="kTrust" class="confirm" style="display:none"></div>
+    <div class="row-btns"><button class="btn" id="kGo">Connect</button><button class="btn ghost" id="kCancel">Cancel</button>
+      <span id="kMsg" class="bad-text"></span></div>
+  </div></div>
+
   <div class="modal" id="combineModal" style="display:none"><div class="modal-box">
     <h2>Combine actions</h2>
     <div id="cWhat" class="muted"></div>
@@ -74,10 +103,14 @@ document.addEventListener("DOMContentLoaded", () => {
   let DATA = null, editing = null, dragId = null, runId = null, offset = 0, pollT = null;
   const open = JSON.parse((() => { try { return localStorage.getItem("sentinel-act-open") || "{}"; } catch (e) { return "{}"; } })());
 
+  let TARGET = "";
   async function load() {
-    try { DATA = await api("/api/actions"); }
-    catch (e) { $("nodb").style.display = "block"; $("nodb").textContent = e.message; return; }
-    $("distro").textContent = ` Detected: ${DATA.distro.pretty}` + (DATA.distro.family ? ` (${DATA.distro.family} family).` : ".");
+    try { DATA = await api("/api/actions" + (TARGET ? `?target=${TARGET}` : "")); }
+    catch (e) {
+      if (TARGET) { TARGET = ""; loadTargets(); return load(); }     // that connection closed: back to this machine
+      $("nodb").style.display = "block"; $("nodb").textContent = e.message; return;
+    }
+    $("distro").textContent = ` Detected on ${DATA.target}: ${DATA.distro.pretty}` + (DATA.distro.family ? ` (${DATA.distro.family} family).` : ".");
     $("restoreBtn").style.display = DATA.hidden_builtins ? "" : "none";
     $("folderList").innerHTML = DATA.folders.map(f => `<option value="${esc(f.name)}">`).join("");
     render(); loadRuns();
@@ -121,7 +154,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const a = byId(id), steps = a.steps.map(s => s.here).filter(Boolean);
     $("termTitle").textContent = a.name;
     $("confirmBox").style.display = "block";
-    $("confirmBox").innerHTML = `<div><b>About to run on ${esc(DATA.distro.pretty)}:</b></div>
+    $("confirmBox").innerHTML = `<div><b>About to run on ${esc(DATA.target)} (${esc(DATA.distro.pretty)}):</b></div>
       <ol>${steps.map(s => `<li><code>${esc(s)}</code></li>`).join("")}</ol>
       ${a.dangerous ? '<label class="chk"><input type="checkbox" id="dangerOk"> This action is marked dangerous. I want to run it.</label>' : ""}
       <div class="row-btns"><button class="btn" id="goBtn">Run</button><button class="btn ghost" id="noBtn">Cancel</button>
@@ -130,7 +163,7 @@ document.addEventListener("DOMContentLoaded", () => {
     $("goBtn").onclick = async () => {
       if (a.dangerous && !$("dangerOk").checked) { alert("Tick the box to confirm."); return; }
       let r;
-      try { r = await api("/api/actions/run", { id, confirm_dangerous: a.dangerous }); }
+      try { r = await api("/api/actions/run", { id, confirm_dangerous: a.dangerous, target: TARGET }); }
       catch (e) { $("confirmBox").insertAdjacentHTML("beforeend", `<div class="bad-text">${esc(e.message)}</div>`); return; }
       $("confirmBox").style.display = "none";
       runId = r.run_id; offset = 0; $("term").textContent = ""; poll();
@@ -154,12 +187,80 @@ document.addEventListener("DOMContentLoaded", () => {
 
   async function loadRuns() {
     let r; try { r = await api("/api/actions/runs"); } catch (e) { return; }
-    $("runRows").innerHTML = r.runs.length ? r.runs.map(x => `<tr><td>${esc(fmtTime(x.started_at))}</td><td>${esc(x.action_name)}</td>
+    $("runRows").innerHTML = r.runs.length ? r.runs.map(x => `<tr><td>${esc(fmtTime(x.started_at))}</td><td>${esc(x.action_name)}</td><td class="muted">${esc(x.target)}</td>
       <td><span class="badge ${x.status === "ok" ? "" : "new"}">${esc(x.status)}</span></td>
       <td class="muted">${(x.steps || []).map(s => `<code title="${esc(s.command)}">${esc(s.command.slice(0, 40))}</code> ${s.exit}`).join(" · ")}</td></tr>`).join("")
-      : '<tr><td colspan="4" class="empty">Nothing has run yet.</td></tr>';
+      : '<tr><td colspan="5" class="empty">Nothing has run yet.</td></tr>';
     if (r.active && !runId) { runId = r.active; offset = 0; poll(); }
   }
+
+
+  // ── machines over SSH ────────────────────────────────────────────────────
+  let OPEN = [];
+  async function loadTargets() {
+    let r; try { r = await api("/api/actions/targets"); } catch (e) { return; }
+    OPEN = r.open;
+    if (TARGET && !OPEN.some(t => t.id === TARGET)) TARGET = "";
+    $("tgtSel").innerHTML = '<option value="">this machine</option>' + OPEN.map(t =>
+      `<option value="${t.id}">${esc(t.user)}@${esc(t.host)}${t.port !== 22 ? ":" + t.port : ""} (${esc(t.hostname || "")})</option>`).join("");
+    $("tgtSel").value = TARGET;
+    const t = OPEN.find(x => x.id === TARGET);
+    $("discBtn").style.display = t ? "" : "none";
+    $("tgtInfo").textContent = t ? `${t.distro.pretty} · host key ${t.fingerprint}` + (t.sudo ? " · sudo password set" : " · no sudo password") : "";
+    const seen = new Set();
+    $("hostList").innerHTML = [...r.previous.map(p => ({ v: p.host, l: `${p.username}@${p.host} (used before)`, u: p.username, port: p.port })),
+                               ...r.scanned.map(s => ({ v: s.host, l: [s.hostname, s.device_type, s.os_guess].filter(Boolean).join(" · ") || "SSH open in a scan" }))]
+      .filter(x => !seen.has(x.v) && seen.add(x.v)).map(x => `<option value="${esc(x.v)}">${esc(x.l)}</option>`).join("");
+    PREV = r.previous;
+  }
+  let PREV = [];
+  $("tgtSel").onchange = () => { TARGET = $("tgtSel").value; $("confirmBox").style.display = "none"; loadTargets(); load(); };
+  $("discBtn").onclick = async () => { await api("/api/actions/targets/disconnect", { id: TARGET }).catch(() => {}); TARGET = ""; loadTargets(); load(); };
+
+  const authRows = () => {
+    const a = $("kAuth").value, pw = a === "password";
+    $("kPwRow").style.display = pw ? "" : "none";
+    $("kKeyRow").style.display = a === "key" ? "" : "none";
+    $("kPathRow").style.display = a === "key_path" ? "" : "none";
+    $("kPassRow").style.display = pw ? "none" : "";
+    $("kSameRow").style.display = pw ? "" : "none";
+    $("kSudoRow").style.display = pw ? "none" : "";
+    $("kSudoPwRow").style.display = (pw ? !$("kSame").checked : $("kSudo").checked) ? "" : "none";
+  };
+  $("kAuth").onchange = authRows; $("kSame").onchange = authRows; $("kSudo").onchange = authRows;
+  $("kHost").oninput = () => { const p = PREV.find(x => x.host === $("kHost").value);
+    if (p) { $("kUser").value = p.username; $("kPort").value = p.port; } };
+  let trust = "";
+  $("connBtn").onclick = () => { trust = ""; $("kTrust").style.display = "none"; $("kMsg").textContent = "";
+    $("kGo").textContent = "Connect"; authRows(); $("connModal").style.display = "flex"; $("kHost").focus(); };
+  const clearSecrets = () => ["kPw", "kKey", "kPass", "kSudoPw"].forEach(i => $(i).value = "");
+  $("kCancel").onclick = () => { clearSecrets(); $("connModal").style.display = "none"; };
+  $("kHost").addEventListener("change", () => { trust = ""; $("kTrust").style.display = "none"; $("kGo").textContent = "Connect"; });
+  $("kGo").onclick = async () => {
+    const a = $("kAuth").value, pw = a === "password";
+    const body = { host: $("kHost").value.trim(), port: +$("kPort").value || 22, user: $("kUser").value.trim(), auth: a,
+      password: pw ? $("kPw").value : "", key: a === "key" ? $("kKey").value : "", key_path: a === "key_path" ? $("kPath").value : "",
+      key_passphrase: pw ? "" : $("kPass").value, sudo_with_login: pw && $("kSame").checked,
+      sudo_password: (pw ? !$("kSame").checked : $("kSudo").checked) ? $("kSudoPw").value : "", trust };
+    $("kMsg").textContent = ""; $("kGo").disabled = true; $("kGo").textContent = "Connecting…";
+    try {
+      const t = await api("/api/actions/targets/connect", body);
+      clearSecrets(); $("connModal").style.display = "none";
+      TARGET = t.id; await loadTargets(); load();
+    } catch (e) {
+      if (e.data && e.data.needs_trust) {
+        trust = e.data.needs_trust;
+        $("kTrust").style.display = "block";
+        $("kTrust").innerHTML = `<div class="${e.data.changed_from ? "bad-text" : ""}"><b>${esc(e.message)}</b></div>
+          ${e.data.changed_from ? `<div>Before: <code>${esc(e.data.changed_from)}</code></div>` : ""}
+          <div>${e.data.changed_from ? "Now" : "Fingerprint"}: <code>${esc(trust)}</code></div>
+          <div class="muted">Check it on the machine itself, for example: <code>ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub</code>.
+          Click Connect again only if it matches.</div>`;
+        $("kGo").textContent = "It matches - connect";
+      } else { $("kMsg").textContent = e.message; $("kGo").textContent = trust ? "It matches - connect" : "Connect"; }
+    } finally { $("kGo").disabled = false; }
+  };
+  loadTargets();
 
   // ── create / edit ────────────────────────────────────────────────────────
   let parseT = null;

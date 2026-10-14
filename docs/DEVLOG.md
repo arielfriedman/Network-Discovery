@@ -32,10 +32,29 @@ Entry template:
 
 ---
 
-## 2026-10-14 - Actions: remote targets started (WIP, not wired)
-**Change:** `panel/action_targets.py` added (not imported yet). User asked
-that actions run on a device they connect to first. Next steps are listed in
-`docs/ACTIONS_PLAN.md` under "Resume here". Nothing tested yet.
+## 2026-10-14 - Actions: run on a machine you connect to over SSH
+**Change:** Actions can now run on another machine. A "Connect to a machine…" dialog
+(password / pasted key / key file, optional sudo password) plus a "Run on" picker.
+Host-key fingerprint must be confirmed on first contact, then pinned. Steps resolve to
+the remote machine's distro. Migration `011_action_targets.sql` (no secrets stored).
+Files: `panel/action_targets.py`, `panel/actions.py` (`distro_from`, `_run_remote`,
+`_run_local`, `start(..., target_id)`, `list_actions(target_id)`), `panel/serve.py`
+(target API, 409 `needs_trust`), `panel/web/actions.html`, `style.css`. Details in
+`docs/ACTIONS_PLAN.md` "Remote targets". The earlier WIP commit (e8cbfa6) is now wired.
+**Why:** user asked to open a connection to a device before running actions on it.
+**Issues found in testing (fixed):**
+- The sudo password showed in the output. Cause: the remote pty echoes what the panel
+  sends. Fix: `stty -echo` at the start of each step, and the password is also
+  replaced with "[sudo password hidden]" in the output (passwords of 4+ characters).
+- `run_step` had no time limit. Added the same 30-minute step timeout as local runs.
+**Verified:** 22/22 tests against a test sshd on 127.0.0.1:2222 with a fake `sudo` on PATH:
+first-contact trust, wrong trust refused, pin reuse, changed host key refused and
+re-trusted, remote run, `sudo -n` fail with hint, sudo password fed with marker and
+password hidden, wrong sudo password stops, Stop kills the remote command, pasted-key
+login, bad login and unreachable errors, run stores target, HTTP API (409, list,
+closed target 400, forget). Screenshots of the page and dialog checked. Panel-local runs unchanged.
+**Not verified:** password login (the test sshd has no PAM), a real Raspberry Pi / other
+distro, real `sudo` (only the stand-in), the full Connect click-through in a browser.
 
 ## 2026-10-14 - Actions page, stages 1-3
 **Change:** new *Actions* tab (`panel/web/actions.html`, `panel/actions.py`,

@@ -94,7 +94,7 @@ LIBRARY = [
 
 # ── distro ───────────────────────────────────────────────────────────────────
 def distro() -> dict:
-    """{id, like, family, pretty} from /etc/os-release."""
+    """{id, like, family, pretty} from this machine's /etc/os-release."""
     info = {}
     try:
         for line in Path("/etc/os-release").read_text().splitlines():
@@ -102,6 +102,11 @@ def distro() -> dict:
             info[k] = v.strip().strip('"')
     except OSError:
         pass
+    return distro_from(info)
+
+
+def distro_from(info: dict) -> dict:
+    """{id, like, family, pretty} from parsed os-release fields (this machine or a remote one)."""
     ids = [info.get("ID", "")] + info.get("ID_LIKE", "").split()
     fam = ""
     for i in ids:
@@ -179,9 +184,20 @@ def _write_steps(aid: int, steps: list[dict]) -> None:
            (aid, i, s["command"], json.dumps(s["variants"]) if s.get("variants") else None))
 
 
-def list_actions() -> dict:
+def _target(target_id: str | None):
+    if not target_id:
+        return None
+    import action_targets
+    try:
+        return action_targets.get(target_id)
+    except action_targets.TargetError as e:
+        raise ActionError(str(e)) from None
+
+
+def list_actions(target_id: str | None = None) -> dict:
     ensure_library()
-    d = distro()
+    t = _target(target_id)
+    d = t["distro"] if t else distro()
     folders = _q("SELECT id, name, position FROM action_folders ORDER BY position, name")
     acts = _q("""SELECT a.id, a.folder_id, a.name, a.description, a.dangerous, a.stop_on_error, a.builtin_key, a.position,
                         coalesce(json_agg(json_build_object('command', s.command, 'variants', s.variants)
@@ -193,7 +209,8 @@ def list_actions() -> dict:
             s["here"] = resolve(s["command"], s.get("variants"), d)
         a["available"] = any(s["here"] for s in a["steps"])
     hidden = _q("SELECT count(*) AS n FROM actions WHERE hidden", one=True)["n"]
-    return {"folders": folders, "actions": acts, "distro": d, "hidden_builtins": hidden}
+    return {"folders": folders, "actions": acts, "distro": d, "hidden_builtins": hidden,
+            "target": f"{t['user']}@{t['host']}" if t else "this machine"}
 
 
 def parse_text(text: str) -> list[str]:
@@ -352,8 +369,12 @@ def active_run() -> int | None:
         return next((i for i, r in RUNS.items() if r["status"] == "running"), None)
 
 
-def start(aid: int, confirm_dangerous: bool = False, source_ip: str | None = None) -> dict:
-    data = {a["id"]: a for a in list_actions()["actions"]}
+def start(aid: int, confirm_dangerous: bool = False, source_ip: str | None = None,
+          target_id: str | None = None) -> dict:
+    listing = list_actions(target_id)
+    t = _target(target_id)
+    d, where = listing["distro"], listing["target"]
+    data = {a["id"]: a for a in listing["actions"]}
     a = data.get(aid)
     if not a:
         raise ActionError("action not found")
@@ -361,21 +382,20 @@ def start(aid: int, confirm_dangerous: bool = False, source_ip: str | None = Non
         raise ActionError("this action is marked dangerous - confirm it to run")
     steps = [s["here"] for s in a["steps"] if s["here"]]
     if not steps:
-        raise ActionError(f"none of this action's steps apply to {distro()['pretty']}")
+        raise ActionError(f"none of this action's steps apply to {d['pretty']}")
     if active_run():
         raise ActionError("another action is still running - wait for it or stop it")
-    d = distro()
-    rid = _q("""INSERT INTO action_runs (action_id, action_name, distro, status, started_by)
-                VALUES (%s, %s, %s, 'running', (SELECT id FROM users WHERE email = 'local@localhost')) RETURNING id""",
-             (aid, a["name"], d["pretty"]), one=True)["id"]
+    rid = _q("""INSERT INTO action_runs (action_id, action_name, target, distro, status, started_by)
+                VALUES (%s, %s, %s, %s, 'running', (SELECT id FROM users WHERE email = 'local@localhost'))
+                RETURNING id""", (aid, a["name"], where, d["pretty"]), one=True)["id"]
     run = {"id": rid, "action": a["name"], "status": "running", "out": "", "steps": [], "proc": None,
-           "stop": False, "started": time.time()}
+           "stop": False, "started": time.time(), "target": t, "where": where}
     with _RUN_LOCK:
         RUNS[rid] = run
         for old in sorted(RUNS)[:-20]:                  # keep the last 20 in memory
             if RUNS[old]["status"] != "running":
                 del RUNS[old]
-    db.log("action.run", a["name"], {"run": rid, "steps": steps, "distro": d["pretty"]}, source_ip)
+    db.log("action.run", a["name"], {"run": rid, "steps": steps, "distro": d["pretty"], "target": where}, source_ip)
     threading.Thread(target=_run, args=(run, steps, a["stop_on_error"]), daemon=True).start()
     return {"run_id": rid, "steps": steps}
 
@@ -395,23 +415,17 @@ def _run(run: dict, steps: list[str], stop_on_error: bool) -> None:
             status = "stopped"; break
         _emit(run, ("\n" if run["out"] else "") + f"$ {cmd}\n")
         t0, buf = time.time(), []
-        try:
-            p = subprocess.Popen(["bash", "-o", "pipefail", "-c", SUDO_N + cmd], cwd=str(Path.home()),
-                                 env=_clean_env(), stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                                 stderr=subprocess.STDOUT, process_group=0)
-        except OSError as e:
-            _emit(run, f"could not start: {e}\n"); status = "failed"; break
-        run["proc"] = p
-        killer = threading.Timer(STEP_TIMEOUT, lambda: _kill(p))
-        killer.start()
-        for chunk in iter(lambda: p.stdout.read1(4096), b""):
-            text = chunk.decode("utf-8", "replace")
-            buf.append(text); _emit(run, text)
-        rc = p.wait(); killer.cancel(); run["proc"] = None
+        if run["target"]:
+            rc = _run_remote(run, cmd, buf)
+        else:
+            rc = _run_local(run, cmd, buf)
+            if rc is None:
+                status = "failed"; break
         out = "".join(buf)
         if rc != 0 and "sudo: a password is required" in out:
-            _emit(run, "\n[sudo needs your password: run `sudo -v` in the terminal where the panel runs, "
-                       "then run this action again]\n")
+            _emit(run, "\n[sudo needs a password: " + (
+                "reconnect to this machine and tick 'use a sudo password'" if run["target"] else
+                "run `sudo -v` in the terminal where the panel runs") + ", then run this action again]\n")
         dur = round(time.time() - t0, 1)
         _emit(run, f"[exit {rc} · {dur} s]\n")
         run["steps"].append({"command": cmd, "exit": rc, "duration": dur})
@@ -427,12 +441,43 @@ def _run(run: dict, steps: list[str], stop_on_error: bool) -> None:
             if stop_on_error:
                 _emit(run, "[stopped at the first failing step]\n"); break
     run["status"] = status
+    run["target"] = None                                # don't hold the connection object
     try:
         _q("UPDATE action_runs SET status = %s, finished_at = now() WHERE id = %s", (status, run["id"]))
     except Exception:  # noqa: BLE001
         pass
-    db.log("action.done", run["action"], {"run": run["id"], "status": status,
+    db.log("action.done", run["action"], {"run": run["id"], "status": status, "target": run["where"],
                                           "exit_codes": [s["exit"] for s in run["steps"]]})
+
+
+def _run_remote(run: dict, cmd: str, buf: list) -> int:
+    import action_targets
+
+    def emit(text):
+        buf.append(text); _emit(run, text)
+    try:
+        return action_targets.run_step(run["target"], cmd, emit, lambda: run["stop"], STEP_TIMEOUT)
+    except Exception as e:  # noqa: BLE001 - connection dropped mid-step
+        emit(f"\n[connection error: {e}]\n")
+        return 255
+
+
+def _run_local(run: dict, cmd: str, buf: list) -> int | None:
+    try:
+        p = subprocess.Popen(["bash", "-o", "pipefail", "-c", SUDO_N + cmd], cwd=str(Path.home()),
+                             env=_clean_env(), stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                             stderr=subprocess.STDOUT, process_group=0)
+    except OSError as e:
+        _emit(run, f"could not start: {e}\n")
+        return None
+    run["proc"] = p
+    killer = threading.Timer(STEP_TIMEOUT, lambda: _kill(p))
+    killer.start()
+    for chunk in iter(lambda: p.stdout.read1(4096), b""):
+        text = chunk.decode("utf-8", "replace")
+        buf.append(text); _emit(run, text)
+    rc = p.wait(); killer.cancel(); run["proc"] = None
+    return rc
 
 
 def _kill(p) -> None:
@@ -469,7 +514,7 @@ def run_status(rid: int, offset: int = 0) -> dict | None:
 
 
 def recent_runs(limit: int = 30) -> list[dict]:
-    return _q("""SELECT r.id, r.action_name, r.status, r.distro, r.started_at, r.finished_at,
+    return _q("""SELECT r.id, r.action_name, r.target, r.status, r.distro, r.started_at, r.finished_at,
                         (SELECT json_agg(json_build_object('command', s.command, 'exit', s.exit_code) ORDER BY s.position)
                          FROM action_run_steps s WHERE s.run_id = r.id) AS steps
                  FROM action_runs r ORDER BY r.started_at DESC LIMIT %s""", (limit,))

@@ -229,7 +229,7 @@ def disconnect(tid: str) -> dict:
     return {"closed": bool(t)}
 
 
-def known() -> list[dict]:
+def known() -> dict:
     """Machines connected to before (no secrets) and SSH hosts from the latest scans."""
     prev = _q("SELECT host, port, username, fingerprint, distro, last_used FROM action_targets "
               "ORDER BY last_used DESC NULLS LAST LIMIT 30")
@@ -251,25 +251,36 @@ def forget(host: str, port: int) -> dict:
     return {"forgotten": True}
 
 
-def run_step(t: dict, cmd: str, emit, should_stop) -> int:
+def _redact(t: dict, text: str) -> str:
+    """Second line of defence if a remote tty echoes the sudo password anyway."""
+    pw = t.get("sudo_pw") or ""
+    return text.replace(pw, "[sudo password hidden]") if len(pw) >= 4 else text
+
+
+def run_step(t: dict, cmd: str, emit, should_stop, timeout: float = 30 * 60) -> int:
     """Run one step on the remote machine; stream output through emit(text). Returns the exit code."""
     marker = "SENTINEL_SUDO_" + secrets.token_hex(6) + ":"
     if t.get("sudo_pw"):
         wrap = f"sudo() {{ command sudo -S -p '{marker}' \"$@\"; }}\n"
     else:
         wrap = 'sudo() { command sudo -n "$@"; }\n'
-    script = wrap + cmd
+    # the pty echoes what we send; with echo off the sudo password never shows in the output
+    script = "stty -echo 2>/dev/null\n" + wrap + cmd
     line = (f"{t['shell']} -o pipefail -c {shlex.quote(script)}" if t["shell"] == "bash"
             else f"sh -c {shlex.quote(script)}")
     ch = t["transport"].open_session(timeout=15)
     ch.get_pty(term="dumb", width=200, height=50)       # a pty: closing it stops the remote command
     ch.settimeout(0.5)
     ch.exec_command(line)
-    pending, prompts = "", 0
+    pending, prompts, t0 = "", 0, time.time()
     while True:
         if should_stop():
             ch.close()
             return -15
+        if time.time() - t0 > timeout:
+            emit(f"\n[step timed out after {int(timeout)} s]\n")
+            ch.close()
+            return 124
         try:
             data = ch.recv(32768)
         except socket.timeout:
@@ -298,9 +309,9 @@ def run_step(t: dict, cmd: str, emit, should_stop) -> int:
                     pending, text = text[-k:], text[:-k]
                     break
         if text:
-            emit(text)
+            emit(_redact(t, text))
     if pending:
-        emit(pending)
+        emit(_redact(t, pending))
     rc = ch.recv_exit_status()
     ch.close()
     return rc
