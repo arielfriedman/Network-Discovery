@@ -32,6 +32,16 @@ Entry template:
 
 ---
 
+## 2026-10-14 - Process note: two agents committed in the same checkout
+While the host-profile work was being finished, a second agent (started for
+the Actions page idea, `docs/ACTIONS_PLAN.md`) committed the whole working
+tree as `adf0784`, including the host-profile files, with its own README /
+DEVLOG text. The first agent's README edit then failed its own check (the
+file had changed) and its commit `882f927` only carried the dashboard
+caption change. Nothing was lost; both commits are pushed and the DEVLOG
+entry below is accurate. **Rule from now on:** one agent works in the
+checkout at a time; a parallel agent uses its own git worktree and branch.
+
 ## 2026-10-14 - Host profiles (OS, apps, system) and more device types
 **Change:**
 - `discovery/lib/host_profile.py`: reads nmap XML per host; OS from banners
