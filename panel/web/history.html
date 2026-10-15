@@ -75,6 +75,13 @@
         <thead><tr><th>Credential</th><th>Type</th><th>Host</th><th>Result</th><th>Detail</th></tr></thead>
         <tbody id="loginRows"></tbody></table></div>
     </div>
+    <div id="vmSec" style="display:none">
+      <h2>Virtual machines</h2>
+      <div class="muted" id="hvInfo"></div>
+      <div class="tbl-wrap"><table class="data">
+        <thead><tr><th>VM</th><th>State</th><th>OS</th><th>vCPU</th><th>RAM</th><th>Disks (physical media)</th><th>IPs</th><th>Inside the guest</th></tr></thead>
+        <tbody id="vmRows"></tbody></table></div>
+    </div>
     <div id="hostsSec" style="display:none">
       <h2>Hosts</h2>
       <div class="tbl-wrap"><table class="data">
@@ -121,8 +128,29 @@ document.addEventListener("DOMContentLoaded", () => {
     if (sy.cpu || sy.memory) rows.push(`<b>CPU / RAM</b> ${esc(sy.cpu || "")} · ${esc(sy.memory || "")}`);
     if (sy.docker && sy.docker.length) rows.push(`<b>Docker</b> ${sy.docker.map(c => `${esc(c.name)} <span class="muted">(${esc(c.image)}, ${esc((c.status || "").split(" ")[0])})</span>`).join(", ")}`);
     if (sy.kubernetes && sy.kubernetes.length) rows.push(`<b>Kubernetes</b> ${esc(sy.kubernetes.join(" "))}`);
+    if (sy.virtualization) rows.push(`<b>Runs as</b> virtual machine / container (${esc(sy.virtualization)})`);
+    if ((sy.disks || []).length) rows.push(`<b>Disks</b> ` + sy.disks.map((d) => `${esc(d.name)} ${d.size_gb} GB <span class="muted">${esc(d.media)}${d.model ? " · " + esc(d.model) : ""}</span>`).join(", "));
+    if (sy.packages) rows.push(`<b>Packages (${sy.packages.count} via ${esc(sy.packages.manager)})</b> <span class="muted">${esc([...(sy.packages.installed || []), ...(sy.packages.snap || []).map((x) => "snap:" + x), ...(sy.packages.flatpak || []).map((x) => "flatpak:" + x)].join(", "))}</span>`);
     if (sy.services && sy.services.length) rows.push(`<b>Services</b> <span class="muted">${esc(sy.services.join(", "))}</span>`);
     return `<details class="sys"><summary>System details (SSH login)</summary>${rows.map(r => `<div>${r}</div>`).join("")}</details>`;
+  }
+
+  const fmtMem = (mb) => mb == null ? "" : mb >= 1024 ? (mb / 1024).toFixed(mb % 1024 ? 1 : 0) + " GB" : mb + " MB";
+  const fmtDisks = (ds) => (ds || []).map((d) => `${esc(d.id)} ${d.size_gb != null ? d.size_gb + " GB" : ""} <span class="muted">${esc((d.media || []).join("+") || "?")}${d.emulated_ssd ? " (shown to guest as SSD)" : ""} · ${esc(d.storage || "")}</span>`).join("<br>");
+  function vmRows(vms) {
+    return vms.map((v) => {
+      const g = v.guest || {};
+      const guest = !v.host_ip ? '<span class="muted">not seen on the scanned network</span>'
+        : `<b>${esc(v.host_ip)}</b>${(g.ports || []).length ? ` <span class="muted">ports ${esc(g.ports.join(", "))}</span>` : ""}`
+          + ((g.apps || []).length ? `<div>${g.apps.map((a) => `<span class="chip app">${esc(a)}</span>`).join(" ")}</div>` : "")
+          + ((g.services || []).length ? `<details class="sys"><summary>${g.services.length} running service(s)${g.packages ? ` · ${g.packages} packages` : ""}</summary><div class="muted">${esc(g.services.join(", "))}</div></details>`
+             : !g.logged_in ? '<div class="muted">add an SSH card for its services and packages</div>' : "");
+      return `<tr><td><b>${esc(v.name)}</b><div class="muted">${esc(v.kind)} ${esc(v.id)} on ${esc(v.hypervisor)}${v.node ? "/" + esc(v.node) : ""}</div></td>
+        <td>${esc(v.status || "")}${v.cpu_pct != null ? `<div class="muted">CPU ${v.cpu_pct}%</div>` : ""}</td>
+        <td>${esc(v.os || "")}${v.agent ? `<div class="muted">agent: ${esc(v.agent)}</div>` : ""}</td>
+        <td>${v.vcpus ?? ""}</td><td>${fmtMem(v.memory_mb)}${v.mem_used_mb != null ? `<div class="muted">${fmtMem(v.mem_used_mb)} used</div>` : ""}</td>
+        <td>${fmtDisks(v.disks)}</td><td>${(v.ips || []).map(esc).join("<br>")}</td><td>${guest}</td></tr>`;
+    }).join("");
   }
 
   async function openScan(ref) {
@@ -167,11 +195,17 @@ document.addEventListener("DOMContentLoaded", () => {
     $("loginsSec").style.display = L.length ? "block" : "none";
     $("loginRows").innerHTML = L.map(c => `<tr><td>${esc(c.cred_name)}</td><td>${esc(c.cred_type)}</td><td>${esc(c.host)}</td>
       <td><span class="badge ${c.result === "ok" ? "" : "new"}">${esc(RES[c.result] || c.result)}</span></td><td class="muted">${esc(c.detail || "")}</td></tr>`).join("");
+    const sm = s.summary || {}, VMS = sm.vms || [], HVS = sm.hypervisors || [];
+    $("vmSec").style.display = VMS.length || HVS.length ? "block" : "none";
+    $("hvInfo").textContent = HVS.map(h => `${h.host}: ${h.platform}${h.version ? " " + h.version.split(" ")[0] : ""}, ${h.vms} guest(s)`).join(" · ");
+    $("vmRows").innerHTML = vmRows(VMS);
     $("hostsSec").style.display = d.hosts.length ? "block" : "none";
     $("hostRows").innerHTML = d.hosts.map(h => `<tr><td>${esc(h.ip)}</td><td>${esc(h.hostname || "")}</td>
       <td>${h.device_type ? `<span class="badge" title="${esc((h.device_evidence || []).join("\n"))}">${esc(h.device_type)}${h.device_confidence !== "high" ? " ?" : ""}</span>${h.device_model ? `<div class="muted">${esc(h.device_model)}</div>` : ""}` : ""}</td>
       <td>${esc(h.vendor || "")}</td>
-      <td><code>${esc(h.mac || "")}</code></td>
+      <td><code>${esc(h.mac || "")}</code>${(x => x.vm ? `<div class="muted">VM ${esc(x.vm.name)} on ${esc(x.vm.hypervisor)}</div>`
+        : x.hypervisor ? `<div class="muted">${esc(x.hypervisor.platform)} host · ${x.hypervisor.vms} guests</div>`
+        : x.vm_guess ? `<div class="muted">likely ${esc(x.vm_guess)} VM</div>` : "")(h.extra || {})}</td>
       <td>${esc(h.os_guess || "")}${h.extra && h.extra.os_source ? `<div class="muted" title="${esc(h.extra.os_source)}">from ${esc(h.extra.os_source.split(":")[0])}</div>` : ""}</td>
       <td>${((h.extra || {}).apps || []).map(a => `<span class="badge" title="${esc(a.evidence)}">${esc(a.name)} :${a.port}</span>`).join(" ")}
         <div class="muted">${h.services.map(p => `${p.port}/${p.protocol} ${esc(p.service || "")}`).join(", ")}</div>

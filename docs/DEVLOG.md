@@ -32,6 +32,56 @@ Entry template:
 
 ---
 
+## 2026-10-15 - VM inventory: VMs on Proxmox / libvirt hypervisors (scan-builder step 3)
+**Change:** Network scans list the VMs and containers on hypervisors and join them with the
+hosts found on the network. New `discovery/lib/vm_inventory.py`: (a) Proxmox VE REST API with
+an API token (new credential card "Proxmox VE": host, token ID, secret, optional cert SHA-256),
+GET only: nodes, storage, physical disks, LVM/ZFS layout, qemu + lxc configs, live CPU/RAM,
+guest agent get-osinfo / network-get-interfaces / get-fsinfo; (b) parser for a new
+`=== hypervisor ===` section of the SSH collection (`qm`/`pct config`, `storage.cfg`, `pvs`,
+`zpool`, `virsh -r dominfo/domblklist/domblkinfo/domiflist`, `lsblk`, `df`); (c) `merge()`
+matches VMs to hosts by MAC then IP. Each disk gets the physical media behind its storage
+(nvme/ssd/hdd/network). The SSH collection also gathers in every guest: `systemd-detect-virt`,
+disks with media (`lsblk`), package counts + manually installed packages (dpkg/rpm/pacman/apk,
+snap, flatpak). Dashboard + History page: new "Virtual machines" table (VM, state, OS, vCPU,
+RAM, disks, IPs, ports/apps/services/packages from inside the guest); host rows say
+"VM x on y" / "proxmox host" / "likely VM (MAC)". Stored in `hosts.extra` and `scans.summary`
+(no migration). SSH timeout 30 s -> 120 s (a hypervisor with many guests runs one
+`qm config` per guest). Files: `discovery/lib/{vm_inventory.py,scan_auth.sh,host_profile.py,
+build_json.py,creds.py,summarize.sh,dashboard.template.html}`, `panel/{serve.py,db.py}`,
+`panel/web/{creds.js,index.html,history.html}`, `discovery/tests/{pve_sim.py,test_vm_inventory.py}`,
+`docs/VM_INVENTORY.md`, `.gitignore` (`discovery/config/known_tls`).
+**Why:** user asked for VM details (CPU, memory, HDD/SSD/NVMe, services, apps) when a scan
+runs. Step 3 had been paused since 2026-10-13; resumed after the user reported that stop as
+a false positive.
+**Design:** Proxmox certificates are self-signed, so the API connection pins the cert's
+SHA-256 (card value, or trust-on-first-use in `config/known_tls`) and checks it on every
+connection before the token is sent. Guest agent `exec`/`file-read` are never used (they run
+code in the VM). Proxmox cards are accepted for network scans only (`creds.LAN_TYPES`); the host
+must be a private IPv4. A VM's OS comes from the guest agent, else from an SSH login to the
+guest, else from the Proxmox `ostype`.
+**Issues / errors:** (1) test page for `creds.js` showed `esc is not defined` -> `esc` lives in
+index.html, not common.js; harness only, code fine. (2) end-to-end shell test did nothing ->
+sourcing `creds.sh` resets `HAVE_CREDS=0`; set it after sourcing (test only). (3) first
+render showed the OS as "Linux (2.6+ kernel)" (Proxmox `ostype`) although the SSH login knew
+"Debian 12" -> the guest's own answer now wins unless the guest agent answered. (4) Proxmox
+version string was the full `pveversion` line -> trimmed to the number.
+**Verified:** `test_vm_inventory.py` 38/38 (API: VM/LXC fields, vCPU = cores x sockets,
+cdrom/template skipped, LVM-thin -> nvme, ZFS mirror -> hdd+ssd, NFS -> network, guest agent
+OS/IPs, GET only, no exec, wrong token -> auth_failed, changed cert refused before the token is
+sent, public host refused; SSH: Proxmox incl. snapshot sections and dir storage via df+lsblk,
+libvirt; guest disks/packages/virt; MAC join). `test_cloud_api.py` 20/20. The new remote
+command run locally (bash -n + real output). `auth_proxmox_cards` run end to end against the
+simulator (login row ok, json written, cert pinned once). `build_json.py` + dashboard on a fake
+run: rendered in headless Firefox, no JS errors. `history.html` parses with no errors; Proxmox
+card renders and flags missing fields. `serve.parse_credentials` accepts proxmox for network,
+refuses it for cloud.
+**Not verified / follow-up:** not yet run against the real Proxmox host (172.16.0.30) or a
+real libvirt host; needs a PVEAuditor token or root SSH from the user. vCenter/ESXi/Hyper-V
+still step 4.
+
+---
+
 ## 2026-10-14 - Actions: several terminals as tabs
 **Change:** The Terminal pane has tabs: "+ New terminal on <machine>" opens another
 shell on the machine in "Run on" (mix this machine and SSH machines); click a tab to

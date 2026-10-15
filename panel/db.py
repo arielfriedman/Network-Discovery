@@ -326,7 +326,8 @@ def save_network_scan(data: dict, kind: str = "network", status: str = "complete
             cur, ref, kind, target=(meta.get("target") or None) if kind != "cloud" else "cloud accounts", status=status,
             severity_counts=psycopg2.extras.Json(counts),
             summary=psycopg2.extras.Json({"stats": data.get("stats", {}), "meta": meta,
-                                          "cloud": data.get("cloud", {})}),
+                                          "cloud": data.get("cloud", {}),
+                                          "vms": data.get("vms", []), "hypervisors": data.get("hypervisors", [])}),
             report_path=report_path, finished_at=datetime.now().astimezone(),
             **({"started_at": started} if started else {}),
         )
@@ -364,7 +365,7 @@ def save_network_scan(data: dict, kind: str = "network", status: str = "complete
                 continue
             mac = h.get("mac") if h.get("mac") and re.match(r"^([0-9a-fA-F]{2}[:-]){5}[0-9a-fA-F]{2}$", h["mac"]) else None
             extra = {k: h.get(k) for k in ("mdns", "netbios", "ssdp", "apps", "system", "os_source",
-                                            "os_confidence", "mac_random") if h.get(k)}
+                                            "os_confidence", "mac_random", "vm", "vm_guess", "hypervisor") if h.get(k)}
             conf = h.get("device_confidence") if h.get("device_confidence") in ("high", "medium", "low") else None
             cur.execute("""INSERT INTO hosts (scan_id, ip, mac, hostname, vendor, os_guess, extra,
                                               device_type, device_model, device_confidence, device_evidence)

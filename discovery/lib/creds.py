@@ -44,6 +44,8 @@ TYPES = {
     "azure":      ({"tenant_id", "client_id", "client_secret"}, {"subscription"}, {"client_secret"}),
     "gcp":        ({"key_json"}, {"project"}, {"key_json"}),
     "k8s":        ({"kubeconfig"}, {"context"}, {"kubeconfig"}),
+    # hypervisors on the local network (lib/vm_inventory.py)
+    "proxmox":    ({"host", "token_id", "token_secret"}, {"port", "fingerprint"}, {"token_secret"}),
     # token-based cloud APIs
     "digitalocean": ({"token"}, set(), {"token"}),
     "linode":       ({"token"}, set(), {"token"}),
@@ -58,6 +60,7 @@ TYPES = {
 }
 API_TYPES = {"digitalocean", "linode", "hetzner", "vultr", "scaleway", "cloudflare", "ibm", "ovh", "alibaba", "oci"}
 HOST_TYPES = {"ssh", "snmp"}            # credentials that apply per host
+LAN_TYPES = HOST_TYPES | {"proxmox"}    # used by network scans; the rest by cloud scans
 SNMP_AUTH = {"MD5", "SHA", "SHA-224", "SHA-256", "SHA-384", "SHA-512"}
 SNMP_PRIV = {"DES", "AES", "AES-192", "AES-256"}
 SNMP_LEVEL = {"noAuthNoPriv", "authNoPriv", "authPriv"}
@@ -151,6 +154,20 @@ def validate(s: dict, n: int) -> dict:
     if t == "aws" and fields.get("region") and not re.match(r"^[a-z]{2}(-[a-z]+)+-\d$", fields["region"]):
         raise Bad(f"credential {n} (aws): region {fields['region']!r} does not look like an AWS region")
 
+    if t == "proxmox":
+        try:
+            a = ipaddress.ip_address(fields["host"])
+        except ValueError:
+            raise Bad(f"credential {n} (proxmox): host must be the IP address of the Proxmox VE host")
+        if not (a.is_private or a.is_loopback) or a.version != 4:
+            raise Bad(f"credential {n} (proxmox): {a} is not a private IPv4 address")
+        if not re.match(r"^[\w.-]+@[\w.-]+![\w.-]+$", fields["token_id"]):
+            raise Bad(f"credential {n} (proxmox): token ID looks like user@pam!tokenname")
+        if not re.match(r"^[0-9A-Za-z-]{8,100}$", fields["token_secret"]):
+            raise Bad(f"credential {n} (proxmox): the token secret is the UUID shown once when the token was made")
+        fp = re.sub(r"[^0-9a-f]", "", fields.get("fingerprint", "").lower())
+        if fields.get("fingerprint") and len(fp) != 64:
+            raise Bad(f"credential {n} (proxmox): fingerprint must be the certificate's SHA-256 (64 hex digits)")
     if t == "ovh" and fields.get("endpoint", "eu") not in ("eu", "ca", "us"):
         raise Bad(f"credential {n} (ovh): endpoint must be eu, ca or us")
     if t == "oci" and "PRIVATE KEY" not in fields["private_key"]:

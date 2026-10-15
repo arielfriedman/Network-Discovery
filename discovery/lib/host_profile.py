@@ -6,7 +6,8 @@ login card worked, the collected system details. Produces for each host:
 
   os, os_source, os_confidence      best OS guess and the clue it came from
   apps   [{name, port, category, evidence}]   recognised software / web apps
-  system {os_release, kernel, model, cpu, memory, services, docker, kubernetes}
+  system {os_release, kernel, model, cpu, memory, services, docker, kubernetes,
+          virtualization, disks [{name, media, size_gb, model}], packages {manager, count, installed, snap, flatpak}}
                                     only from an SSH login
   findings [{level, text}]          things worth a look (e.g. open Docker API)
 
@@ -237,6 +238,33 @@ def build(h: dict, xml_path: str | None, ssh_text: str = "", http: dict | None =
             rows = [r.split("\t") for r in cont.splitlines() if r.strip() and "\t" in r]
             system["docker"] = [{"name": r[0], "image": r[1] if len(r) > 1 else "", "status": r[2] if len(r) > 2 else "",
                                  "ports": r[3] if len(r) > 3 else ""} for r in rows][:100]
+        virt = sec.get("virt", "").strip()
+        if virt and virt != "none":
+            system["virtualization"] = virt.split("\n")[0][:40]       # systemd-detect-virt: kvm, vmware, lxc, ...
+        disks = []
+        for line in sec.get("disks", "").splitlines():
+            r = {k.lower(): v for k, v in re.findall(r'(\w+)="([^"]*)"', line)}
+            if not r.get("name"):
+                continue
+            tran, rota = r.get("tran", "").lower(), r.get("rota")
+            media = ("nvme" if tran == "nvme" or r["name"].startswith("nvme") else "usb" if tran == "usb"
+                     else "ssd" if rota == "0" else "hdd" if rota == "1" else "unknown")
+            model = r.get("model", "").strip()
+            # inside a VM the "disk" is whatever the hypervisor emulates; the hypervisor knows the real media
+            if re.search(r"QEMU|VMware|Virtual|VBOX|Msft", model, re.I) or r["name"].startswith(("vd", "xvd")):
+                media = "virtual"
+            size = int(r["size"]) if r.get("size", "").isdigit() else 0
+            disks.append({"name": r["name"], "media": media, "size_gb": round(size / 1e9, 1), "model": model[:60]})
+        if disks:
+            system["disks"] = disks[:40]
+        pk = sec.get("packages", "")
+        m = re.match(r"manager (\w+) (\d+)", pk)
+        if m:
+            rest = [l.strip() for l in pk.splitlines()[1:] if l.strip()]
+            system["packages"] = {"manager": m.group(1), "count": int(m.group(2)),
+                                  "installed": [l for l in rest if ":" not in l][:400],
+                                  "snap": [l[5:] for l in rest if l.startswith("snap:")][:100],
+                                  "flatpak": [l[8:] for l in rest if l.startswith("flatpak:")][:100]}
         k8s = sec.get("kubernetes", "")
         if k8s and "none" not in k8s.lower():
             system["kubernetes"] = [l.strip() for l in k8s.splitlines() if l.strip()][:20]

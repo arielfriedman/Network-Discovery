@@ -197,6 +197,15 @@
     <div class="charts" id="charts"></div>
   </section>
 
+  <section id="vmSec" style="display:none">
+    <h2>Virtual machines</h2>
+    <div class="sub" id="hvInfo"></div>
+    <div style="overflow-x:auto"><table>
+      <thead><tr><th>VM</th><th>State</th><th>OS</th><th>vCPU</th><th>RAM</th><th>Disks (physical media)</th><th>IPs</th><th>Inside the guest</th></tr></thead>
+      <tbody id="vmRows"></tbody>
+    </table></div>
+  </section>
+
   <section>
     <h2>Hosts</h2>
     <div class="toolbar">
@@ -326,6 +335,7 @@
     nports: (h.ports || []).length,
     ipkey: (h.ip || "").split(".").map((n) => String(n).padStart(3, "0")).join("."),
     hay: [h.ip, h.hostname, h.vendor, h.os, h.mac, h.mdns, h.netbios, h.ssdp, h.device_type, h.device_model,
+          h.vm && "vm " + h.vm.name, h.vm_guess, h.hypervisor && "hypervisor",
           ...(h.apps || []).map((a) => a.name), ...((h.system || {}).docker || []).map((c) => c.name + " " + c.image),
           ...(h.ports || []).map((p) => p.port + " " + p.service + " " + (p.version || ""))]
          .filter(Boolean).join(" ").toLowerCase(),
@@ -351,8 +361,37 @@
     if ((sy.docker || []).length) r.push(`<b>Docker (${sy.docker.length})</b> ` + sy.docker.map((c) =>
       `${esc(c.name)} <span class="muted">${esc(c.image)} · ${esc((c.status || "").split(" ")[0])}${c.ports ? " · " + esc(c.ports) : ""}</span>`).join("<br>"));
     if ((sy.kubernetes || []).length) r.push(`<b>Kubernetes</b> ${esc(sy.kubernetes.join(" "))}`);
+    if (sy.virtualization) r.push(`<b>Runs as</b> virtual machine / container (${esc(sy.virtualization)})`);
+    if ((sy.disks || []).length) r.push(`<b>Disks</b> ` + sy.disks.map((d) => `${esc(d.name)} ${d.size_gb} GB <span class="muted">${esc(d.media)}${d.model ? " · " + esc(d.model) : ""}</span>`).join(", "));
+    if (sy.packages) r.push(`<b>Packages (${sy.packages.count} via ${esc(sy.packages.manager)})</b> <span class="muted">${esc([...(sy.packages.installed || []), ...(sy.packages.snap || []).map((x) => "snap:" + x), ...(sy.packages.flatpak || []).map((x) => "flatpak:" + x)].join(", "))}</span>`);
     if ((sy.services || []).length) r.push(`<b>Running services (${sy.services.length})</b> <span class="muted">${esc(sy.services.join(", "))}</span>`);
     return `<details class="sys"><summary>System details (from SSH login)</summary>${r.map((x) => `<div>${x}</div>`).join("")}</details>`;
+  }
+
+  const fmtMem = (mb) => mb == null ? "" : mb >= 1024 ? (mb / 1024).toFixed(mb % 1024 ? 1 : 0) + " GB" : mb + " MB";
+  const fmtDisks = (ds) => (ds || []).map((d) => `${esc(d.id)} ${d.size_gb != null ? d.size_gb + " GB" : ""} <span class="muted">${esc((d.media || []).join("+") || "?")}${d.emulated_ssd ? " (shown to guest as SSD)" : ""} · ${esc(d.storage || "")}</span>`).join("<br>");
+  function vmRows(vms) {
+    return vms.map((v) => {
+      const g = v.guest || {};
+      const guest = !v.host_ip ? '<span class="muted">not seen on the scanned network</span>'
+        : `<b>${esc(v.host_ip)}</b>${(g.ports || []).length ? ` <span class="muted">ports ${esc(g.ports.join(", "))}</span>` : ""}`
+          + ((g.apps || []).length ? `<div>${g.apps.map((a) => `<span class="chip app">${esc(a)}</span>`).join(" ")}</div>` : "")
+          + ((g.services || []).length ? `<details class="sys"><summary>${g.services.length} running service(s)${g.packages ? ` · ${g.packages} packages` : ""}</summary><div class="muted">${esc(g.services.join(", "))}</div></details>`
+             : !g.logged_in ? '<div class="muted">add an SSH card for its services and packages</div>' : "");
+      return `<tr><td><b>${esc(v.name)}</b><div class="muted">${esc(v.kind)} ${esc(v.id)} on ${esc(v.hypervisor)}${v.node ? "/" + esc(v.node) : ""}</div></td>
+        <td>${esc(v.status || "")}${v.cpu_pct != null ? `<div class="muted">CPU ${v.cpu_pct}%</div>` : ""}</td>
+        <td>${esc(v.os || "")}${v.agent ? `<div class="muted">agent: ${esc(v.agent)}</div>` : ""}</td>
+        <td>${v.vcpus ?? ""}</td><td>${fmtMem(v.memory_mb)}${v.mem_used_mb != null ? `<div class="muted">${fmtMem(v.mem_used_mb)} used</div>` : ""}</td>
+        <td>${fmtDisks(v.disks)}</td><td>${(v.ips || []).map(esc).join("<br>")}</td><td>${guest}</td></tr>`;
+    }).join("");
+  }
+  const vmBadge = (h) => h.vm ? `<div class="mac" title="${esc(h.vm.vcpus + " vCPU, " + fmtMem(h.vm.memory_mb))}">VM ${esc(h.vm.name)} on ${esc(h.vm.hypervisor)}</div>`
+    : h.hypervisor ? `<div class="mac">${esc(h.hypervisor.platform)} host · ${h.hypervisor.vms} guests</div>`
+    : h.vm_guess ? `<div class="mac">likely ${esc(h.vm_guess)} VM (MAC)</div>` : "";
+  if ((D.vms || []).length || (D.hypervisors || []).length) {
+    $("vmSec").style.display = "";
+    $("hvInfo").textContent = (D.hypervisors || []).map((h) => `${h.host}: ${h.platform}${h.version ? " " + h.version.split(" ")[0] : ""}, ${h.vms} guest(s)`).join(" · ");
+    $("vmRows").innerHTML = vmRows(D.vms || []);
   }
 
   let sortKey = "ipkey", sortDir = 1;
@@ -381,7 +420,7 @@
         <td class="ip">${esc(h.ip)}</td>
         <td>${h.hostname ? esc(h.hostname) : '<span class="muted">—</span>'}
             ${h.mac ? `<div class="mac">${esc(h.mac)}</div>` : ""}</td>
-        <td>${h.device_type ? `<span class="chip" title="${esc((h.device_evidence || []).join("\n"))}">${esc(h.device_type)}${h.device_confidence !== "high" ? " ?" : ""}</span>${h.device_model ? `<div class="mac">${esc(h.device_model)}</div>` : ""}` : '<span class="muted">—</span>'}</td>
+        <td>${h.device_type ? `<span class="chip" title="${esc((h.device_evidence || []).join("\n"))}">${esc(h.device_type)}${h.device_confidence !== "high" ? " ?" : ""}</span>${h.device_model ? `<div class="mac">${esc(h.device_model)}</div>` : ""}` : '<span class="muted">—</span>'}${vmBadge(h)}</td>
         <td class="opt">${h.vendor ? esc(h.vendor) : '<span class="muted">—</span>'}</td>
         <td class="opt">${h.os ? esc(h.os) + (h.os_source ? `<div class="mac" title="${esc(h.os_source)}">from ${esc(h.os_source.split(":")[0])}</div>` : "") : '<span class="muted">—</span>'}</td>
         <td>${h.nports ? `<div class="chips">${h.ports.map((p) =>

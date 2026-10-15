@@ -12,7 +12,7 @@ build_json() {
   CLOUDDIR="$RAW/cloud" AWSOPEN="$WORK/aws-open-sgs.tsv" \
   META_CIDR="$TARGET_CIDR" META_IFACE="$IFACE" META_GW="$GATEWAY" \
   META_START="$RUN_START_ISO" META_ID="$RUN_ID" META_SELF="$SELF_IP" \
-  TARGETS="${TARGETS_FILE:+$WORK/targets.tsv}" CREDUSE="$WORK/cred-use.tsv" SSHDIR="$RAW/ssh" HOSTSDIR="$RAW/hosts" HTTPJSON="$WORK/http.json" \
+  TARGETS="${TARGETS_FILE:+$WORK/targets.tsv}" CREDUSE="$WORK/cred-use.tsv" SSHDIR="$RAW/ssh" VMDIR="$RAW/vms" HOSTSDIR="$RAW/hosts" HTTPJSON="$WORK/http.json" \
   python3 "$BASE_DIR/lib/build_json.py" >"$RUN_DIR/findings.json"
   ok "findings.json written"
 }

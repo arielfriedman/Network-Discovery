@@ -20,6 +20,11 @@
       ["priv_proto", "Privacy protocol", "select", [["AES", "AES"], ["AES-256", "AES-256"], ["DES", "DES"]], f => f.version === "3" && f.level === "authPriv"],
       ["priv_pass", "Privacy password", "password", "8+ characters", f => f.version === "3" && f.level === "authPriv"],
       ["port", "Port", "text", "161"]] },
+    proxmox: { label: "Proxmox VE", fields: [
+      ["host", "Host IP", "text", "172.16.0.30"], ["port", "Port (optional)", "text", "8006"],
+      ["token_id", "API token ID", "text", "sentinel@pve!scan"], ["token_secret", "Token secret", "password", "xxxxxxxx-xxxx-…"],
+      ["fingerprint", "Certificate SHA-256 (optional)", "text", "AA:BB:…  (blank = trust on first use)"]],
+      hint: "Read-only: Datacenter → Permissions → API Tokens, role PVEAuditor on /, plus VM.GuestAgent.Audit (PVE 9) or VM.Monitor (PVE 8) for OS and IPs from the guest agent. Add an SSH card too for services and packages inside the VMs." },
     aws:   { label: "AWS", fields: [
       ["access_key_id", "Access key ID", "text", "AKIA…"], ["secret_access_key", "Secret access key", "password", ""],
       ["session_token", "Session token (optional)", "password", ""], ["region", "Region", "text", "us-east-1"]],

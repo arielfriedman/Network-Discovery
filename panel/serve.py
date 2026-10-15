@@ -95,7 +95,7 @@ def parse_credentials(body: dict, scope: str) -> dict | None:
     if not isinstance(c, dict) or scope not in ("network", "cloud"):
         return None
     sets = c.get("sets") if isinstance(c.get("sets"), list) else []
-    allowed = {"ssh", "snmp"} if scope == "network" else set(credmod.TYPES) - credmod.HOST_TYPES
+    allowed = credmod.LAN_TYPES if scope == "network" else set(credmod.TYPES) - credmod.LAN_TYPES
     for i, st in enumerate(sets, 1):
         if not isinstance(st, dict) or st.get("type") not in allowed:
             raise BadRequest(f"credential {i}: type not valid for a {scope} scan")

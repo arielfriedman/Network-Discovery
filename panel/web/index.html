@@ -71,7 +71,7 @@ document.addEventListener("DOMContentLoaded",function(){
   }
   // ── network: targets + checklist ──────────────────────────────────────────
   const NET={mode:"network", typed:"", files:[], parsed:null, opts:{names:true,ports:"off",vuln:false,wan:true,pn:false,logins:false}, wanTouched:false};
-  const NET_CRED=["ssh","snmp"], CLOUD_CRED=["aws","azure","gcp","k8s","digitalocean","linode","hetzner","vultr","scaleway","cloudflare","ibm","ovh","alibaba","oci"];
+  const NET_CRED=["ssh","snmp","proxmox"], CLOUD_CRED=["aws","azure","gcp","k8s","digitalocean","linode","hetzner","vultr","scaleway","cloudflare","ibm","ovh","alibaba","oci"];
   const credTypes=()=>scope==="network"?NET_CRED:scope==="cloud"?CLOUD_CRED:[];
   const KIND={ip:"IP",cidr:"range",mac:"MAC",host:"hostname"};
   function netEntries(){
@@ -107,7 +107,7 @@ document.addEventListener("DOMContentLoaded",function(){
             <label class="chk"><input type="checkbox" data-o="vuln" ${o.vuln?"checked":""} ${o.ports==="off"?"disabled":""}> Vulnerability scripts (slow, noisy; needs ports)</label>
             <label class="chk"><input type="checkbox" data-o="wan" ${o.wan?"checked":""}> Gateway and internet path</label>
             <label class="chk" style="display:${t?"flex":"none"}"><input type="checkbox" data-o="pn" ${o.pn?"checked":""}> Scan listed hosts even if they don't answer ping</label>
-            <label class="chk"><input type="checkbox" data-o="logins" ${o.logins?"checked":""}> Log in with credentials (SSH, SNMP) to collect system details</label>
+            <label class="chk"><input type="checkbox" data-o="logins" ${o.logins?"checked":""}> Log in with credentials (SSH, SNMP, Proxmox) to collect system and VM details</label>
           </div></div>
         <div id="credBox" class="credbox" style="display:${o.logins?"block":"none"}"></div>
       </div>`;

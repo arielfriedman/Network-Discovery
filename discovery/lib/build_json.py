@@ -87,7 +87,9 @@ for h in hosts.values():
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import device_types  # noqa: E402
 import host_profile  # noqa: E402
+import vm_inventory  # noqa: E402
 profile_findings = []
+hv_sections = {}           # ip -> "=== hypervisor ===" text from the SSH login
 http_pages = {}
 if env("HTTPJSON") and os.path.exists(env("HTTPJSON")):
     try:
@@ -106,6 +108,9 @@ for h in hosts.values():
         f = os.path.join(env("SSHDIR"), h["ip"].replace(".", "_") + ".txt")
         if os.path.exists(f):
             ssh_text = open(f, encoding="utf-8", errors="replace").read()
+            hv = host_profile._ssh_sections(ssh_text).get("hypervisor", "")
+            if "platform " in hv:
+                hv_sections[h["ip"]] = hv
     xml = os.path.join(env("HOSTSDIR") or "", h["ip"].replace(".", "_") + ".xml") if env("HOSTSDIR") else None
     host_profile.build(h, xml, ssh_text, http_pages.get(h["ip"], {}))        # os (with its source), apps, system, findings
     profile_findings += h.pop("profile_findings", [])
@@ -182,6 +187,12 @@ if env("TARGETS"):
         p = (line.split("\t") + [""] * 6)[:6]
         targets.append(dict(zip(("kind", "value", "source", "ip", "status", "detail"), p)))
 
+# ---------------------------------------------------------------- virtual machines
+# Hypervisor inventories (Proxmox API, qm/pct or virsh over SSH) joined with the
+# hosts above: a VM row gets the guest's ports, apps and services, a host row
+# learns which VM it is (lib/vm_inventory.py).
+vms, hypervisors = vm_inventory.merge(hosts, env("VMDIR"), hv_sections)
+
 notable = []
 RISKY = {"23": "telnet", "21": "ftp", "445": "smb", "3389": "rdp",
          "5900": "vnc", "1900": "upnp", "161": "snmp", "11211": "memcached",
@@ -248,6 +259,20 @@ listed_ips = set(hosts)
 for f in profile_findings:
     if f["text"].split(":")[0] in listed_ips:
         notable.append(f)
+for hv in hypervisors:
+    run = sum(1 for v in vms if v["hypervisor"] == hv["host"] and v.get("status") == "running")
+    notable.append({"level": "info", "text": f"{hv['host']}: {hv['platform']} hypervisor with {hv['vms']} VM(s)/container(s), "
+                                             f"{run} running (from the {'API' if hv['source'] == 'api' else 'SSH login'})"})
+    for e in hv.get("errors", [])[:3]:
+        notable.append({"level": "info", "text": f"{hv['host']}: VM inventory incomplete - {e}"})
+unmatched = [v for v in vms if v.get("status") == "running" and not v.get("host_ip")]
+if unmatched:
+    notable.append({"level": "info", "text": f"{len(unmatched)} running VM(s) not seen on the scanned network: "
+                    + ", ".join(v["name"] for v in unmatched[:5]) + (" ..." if len(unmatched) > 5 else "")})
+guessed = [h for h in hosts.values() if h.get("vm_guess")]
+if guessed and not hypervisors:
+    notable.append({"level": "info", "text": f"{len(guessed)} host(s) look like VMs by their MAC address "
+                    "- add a Proxmox card or an SSH login to the hypervisor for CPU, memory and disk details"})
 app_counts = collections.Counter(a["name"] for h in hosts.values() for a in h.get("apps", [])
                                  if a["category"] != "web app")
 
@@ -282,6 +307,8 @@ out = {
         "named_hosts": sum(1 for h in hosts.values() if h["hostname"]),
         "vendors": len([v for v in vendor_counts if v != "unknown"]),
         "cloud_resources": cloud_total,
+        "vms": len(vms),
+        "hypervisors": len(hypervisors),
     },
     "hosts": host_list,
     "top_ports": [{"label": k, "count": v} for k, v in port_counts.most_common(12)],
@@ -290,6 +317,8 @@ out = {
     "device_types": [{"label": k, "count": v} for k, v in type_counts.most_common()],
     "apps": [{"label": k, "count": v} for k, v in app_counts.most_common(15)],
     "cloud": cloud,
+    "vms": vms,
+    "hypervisors": hypervisors,
     "notable": notable,
     "targets": targets,
     "credential_use": credential_use,

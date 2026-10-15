@@ -1,13 +1,13 @@
 # Scan builder: checklist, targets, credentials, virtualization
 
-Status: steps 1 and 2 done (2026-10-13). Each step is logged in `DEVLOG.md`.
+Status: steps 1 and 2 done (2026-10-13), step 3 done (2026-10-15). Each step is logged in `DEVLOG.md`.
 
 | Step | What | Status |
 |---|---|---|
 | 1 | Checklist of scan parts + targets by IP / CIDR / MAC / hostname, typed or uploaded (`ip.txt`, `mac.txt`, `hostnames.txt`) | done |
 | 2 | Credentials per system type, typed per scan, optional "remember in vault" | done |
-| 3 | VM tagging by MAC prefix + read-only Proxmox inventory | paused (see DEVLOG 2026-10-13) |
-| 4 | vCenter / ESXi / Hyper-V / libvirt inventory | planned |
+| 3 | VM tagging by MAC prefix + read-only Proxmox inventory (API and SSH), libvirt over SSH - see `VM_INVENTORY.md` | done |
+| 4 | vCenter / ESXi / Hyper-V inventory | planned |
 
 ## Step 1 - checklist and targets
 
@@ -180,7 +180,10 @@ Each login attempt is recorded (`work/cred-use.tsv` -> `findings.json`
 host, result (`ok`, `auth_failed`, `unreachable`, `error`). Saved cards get
 a `credentials` row (name, type, hosts, vault key, last used, last result).
 
-## Steps 3-4 - virtualization (planned)
+## Steps 3-4 - virtualization
+
+Step 3 is built: see `VM_INVENTORY.md`. VMs are stored in `scans.summary` and
+`hosts.extra` rather than a new table. The original plan:
 
 MAC-prefix tagging (`BC:24:11` Proxmox, `52:54:00` QEMU/KVM, `00:50:56` /
 `00:0C:29` / `00:05:69` VMware, `00:15:5D` Hyper-V, `08:00:27` VirtualBox,

@@ -19,16 +19,53 @@ SSH_REMOTE_CMD='
     echo "=== kubernetes ==="; k=""; for c in kubectl k3s microk8s kubeadm; do command -v $c >/dev/null && k="$k $c"; done
       for s in k3s k3s-agent kubelet snap.microk8s.daemon-kubelite containerd; do systemctl is-active --quiet $s 2>/dev/null && k="$k $s(running)"; done
       echo "${k:-none}"
+    echo "=== virt ==="; (systemd-detect-virt 2>/dev/null || echo none) | head -n 1
+    echo "=== disks ==="; lsblk -d -b -n -P -o NAME,ROTA,TRAN,SIZE,MODEL,TYPE 2>/dev/null | grep -v -E "TYPE=\"(loop|rom)\"" | head -n 40
+    echo "=== packages ==="
+      if command -v dpkg-query >/dev/null 2>&1; then echo "manager dpkg $(dpkg-query -f "." -W 2>/dev/null | wc -c)"; apt-mark showmanual 2>/dev/null | head -n 400
+      elif command -v rpm >/dev/null 2>&1; then echo "manager rpm $(rpm -qa 2>/dev/null | wc -l)"; (dnf -C -q repoquery --userinstalled --qf "%{name}" 2>/dev/null || rpm -qa --qf "%{NAME}\n" 2>/dev/null) | head -n 400
+      elif command -v pacman >/dev/null 2>&1; then echo "manager pacman $(pacman -Qq 2>/dev/null | wc -l)"; pacman -Qeq 2>/dev/null | head -n 400
+      elif command -v apk >/dev/null 2>&1; then echo "manager apk $(apk info 2>/dev/null | wc -l)"; head -n 400 /etc/apk/world 2>/dev/null
+      fi
+      command -v snap >/dev/null 2>&1 && snap list 2>/dev/null | awk "NR>1{print \"snap:\"\$1}" | head -n 100
+      command -v flatpak >/dev/null 2>&1 && flatpak list --app --columns=application 2>/dev/null | sed "s/^/flatpak:/" | head -n 100
+    echo "=== hypervisor ==="
+      S=""; [ "$(id -u)" = 0 ] || S="sudo -n"
+      if command -v qm >/dev/null 2>&1; then
+        echo "platform proxmox $(pveversion 2>/dev/null | head -n 1)"
+        echo "--- list qemu"; $S qm list 2>/dev/null
+        echo "--- list lxc"; $S pct list 2>/dev/null
+        for id in $($S qm list 2>/dev/null | awk "NR>1{print \$1}" | head -n 300); do echo "--- qemu $id"; $S qm config "$id" 2>/dev/null; done
+        for id in $($S pct list 2>/dev/null | awk "NR>1{print \$1}" | head -n 300); do echo "--- lxc $id"; $S pct config "$id" 2>/dev/null; done
+        echo "--- storage"; $S cat /etc/pve/storage.cfg 2>/dev/null
+        echo "--- pvs"; $S pvs --noheadings -o pv_name,vg_name 2>/dev/null
+        echo "--- zpool"; zpool list -v -H -P -L 2>/dev/null
+      fi
+      if command -v virsh >/dev/null 2>&1; then
+        V="virsh -r -c qemu:///system"
+        echo "platform libvirt $($V version --daemon 2>/dev/null | awk "/daemon/{print \$NF}")"
+        for d in $($V list --all --uuid 2>/dev/null | head -n 300); do
+          echo "--- domain $d"; $V dominfo "$d" 2>/dev/null
+          echo "# blk"; $V domblklist "$d" --details 2>/dev/null
+          echo "# sizes"; for t in $($V domblklist "$d" --details 2>/dev/null | awk "\$2==\"disk\"{print \$3}"); do echo "$t $($V domblkinfo "$d" "$t" 2>/dev/null | awk "/Capacity/{print \$2}")"; done
+          echo "# nics"; $V domiflist "$d" 2>/dev/null
+        done
+      fi
+      if command -v qm >/dev/null 2>&1 || command -v virsh >/dev/null 2>&1; then
+        echo "--- lsblk"; lsblk -b -n -P -o NAME,PKNAME,ROTA,TRAN,SIZE,MODEL,TYPE 2>/dev/null
+        echo "--- df"; df -P 2>/dev/null
+      fi
 '
 
 stage_auth() {
   [[ "$DO_AUTH" == 1 ]] || { info "authenticated collection disabled (enable with --auth)"; return 0; }
   section "Stage 5 - authenticated collection"
 
-  if (( $(cred_count ssh) + $(cred_count snmp) > 0 )); then
+  if (( $(cred_count ssh) + $(cred_count snmp) + $(cred_count proxmox) > 0 )); then
     # credential cards from the dashboard: per host, no prompts
     auth_snmp_cards
     auth_ssh_cards
+    auth_proxmox_cards
     return 0
   fi
   if [[ "${ND_NONINTERACTIVE:-0}" == 1 ]]; then
@@ -143,11 +180,11 @@ auth_ssh_cards() {
     if [[ -n "$key" || -n "$keyf" ]]; then
       if [[ -n "$key" ]]; then keyf="$SECURE_TMP/key.$id"; [[ -f "$keyf" ]] || cred_file "$id" key "$keyf"; fi
       o+=(-o BatchMode=yes -o IdentitiesOnly=yes -o PasswordAuthentication=no -i "${keyf/#\~/$HOME}")
-      out=$(timeout 30 ssh "${o[@]}" "$user@$ip" "$SSH_REMOTE_CMD" 2>&1); rc=$?
+      out=$(timeout 120 ssh "${o[@]}" "$user@$ip" "$SSH_REMOTE_CMD" 2>&1); rc=$?
     elif have sshpass; then
       o+=(-o PubkeyAuthentication=no -o PreferredAuthentications=password,keyboard-interactive)
       # sshpass -e reads $SSHPASS: the password is never in argv
-      out=$(SSHPASS="$pass" timeout 30 sshpass -e ssh "${o[@]}" "$user@$ip" "$SSH_REMOTE_CMD" 2>&1); rc=$?
+      out=$(SSHPASS="$pass" timeout 120 sshpass -e ssh "${o[@]}" "$user@$ip" "$SSH_REMOTE_CMD" 2>&1); rc=$?
     else
       warn "sshpass is not installed - password logins skipped (sudo apt install sshpass)"
       cred_result ssh "$name" "$ip" error "sshpass missing"; continue
@@ -165,6 +202,23 @@ auth_ssh_cards() {
   done
   pass=""; key=""
   ok "SSH: logged in to $n_ok host(s)"
+}
+
+# ---------------------------------------------------------------- Proxmox VE API (cards)
+# Read-only inventory of every VM and container through the Proxmox REST API
+# (lib/vm_inventory.py, docs/VM_INVENTORY.md). The token stays in $SECURE_TMP;
+# the certificate is pinned in config/known_tls on first contact.
+auth_proxmox_cards() {
+  (( $(cred_count proxmox) > 0 )) || return 0
+  mkdir -p "$RAW/vms"
+  [[ "${ND_PROGRESS:-0}" == 1 ]] && printf '@@cmd %s\n' "vm_inventory.py proxmox (read-only REST)"
+  step "Proxmox VE inventory"
+  local name host r detail
+  while IFS=$'\t' read -r name host r detail; do
+    [[ "$r" =~ ^(ok|auth_failed|unreachable|error)$ ]] || { detail="$name $host $r $detail"; r=error; name=proxmox; }
+    cred_result proxmox "$name" "$host" "$r" "$detail"
+    if [[ "$r" == ok ]]; then ok "Proxmox $host: $detail"; else err "Proxmox $host: ${r//_/ }${detail:+ - $detail}"; fi
+  done < <(python3 "$BASE_DIR/lib/vm_inventory.py" proxmox "$SECURE_TMP" "$RAW/vms" "$BASE_DIR/config/known_tls" 2>&1 | scrub)
 }
 
 # ---------------------------------------------------------------- SNMP
@@ -254,10 +308,10 @@ auth_ssh() {
     step "ssh $user@$ip"
     if (( use_pass )); then
       # sshpass -e reads the password from $SSHPASS - not visible in argv
-      SSHPASS="$pass" timeout 30 sshpass -e ssh "${sshopts[@]}" "$user@$ip" "$remote_cmd" \
+      SSHPASS="$pass" timeout 120 sshpass -e ssh "${sshopts[@]}" "$user@$ip" "$remote_cmd" \
         2>&1 | scrub >"$RAW/ssh/$safe.txt" || warn "  $ip: connection or auth failed"
     else
-      timeout 30 ssh "${sshopts[@]}" "$user@$ip" "$remote_cmd" \
+      timeout 120 ssh "${sshopts[@]}" "$user@$ip" "$remote_cmd" \
         2>&1 | scrub >"$RAW/ssh/$safe.txt" || warn "  $ip: connection or auth failed"
     fi
   done
