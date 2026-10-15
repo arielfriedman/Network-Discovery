@@ -251,12 +251,19 @@ stage_deep() {
   [[ "${TARGETS_PN:-0}" == 1 ]] && opts+=(-Pn)   # listed hosts that ignore ping
 
   mkdir -p "$RAW/hosts"
-  local ip safe running=0 dispatched=0
+  # Wait only for our own nmap jobs: a plain `wait` / `wait -n` also waits for
+  # the sudo keep-alive loop (common.sh), which never ends - the scan hung at
+  # "waiting for the last N scan job(s)" whenever sudo was authorised.
+  local ip safe running=0 dispatched=0 p
+  local -a pids=()
   while read -r ip; do
     # keep at most MAX_PARALLEL scans in flight
-    while (( running >= MAX_PARALLEL )); do
-      wait -n 2>/dev/null || true
-      running=$(( running - 1 ))
+    while :; do
+      local -a live=()
+      for p in "${pids[@]}"; do kill -0 "$p" 2>/dev/null && live+=("$p"); done
+      pids=("${live[@]}"); running=${#pids[@]}
+      (( running < MAX_PARALLEL )) && break
+      sleep 0.5
     done
     safe="${ip//./_}"
     (
@@ -267,6 +274,7 @@ stage_deep() {
         >/dev/null 2>"$RAW/hosts/$safe.err" || true
       [[ -s "$RAW/hosts/$safe.err" ]] || rm -f -- "$RAW/hosts/$safe.err"
     ) &
+    pids+=("$!")
     running=$(( running + 1 ))
     dispatched=$(( dispatched + 1 ))
     printf '\r%s  dispatched %d/%d, %d running%s ' \
@@ -274,7 +282,7 @@ stage_deep() {
   done <"$WORK/hosts.list"
   printf '\r%*s\r' 60 ''
   step "waiting for the last $running scan job(s)"
-  wait
+  (( ${#pids[@]} )) && wait "${pids[@]}" 2>/dev/null
   ok "deep scan complete ($(ls -1 "$RAW/hosts"/*.txt 2>/dev/null | wc -l) host reports)"
 
   extract_services

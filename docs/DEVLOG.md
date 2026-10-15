@@ -32,6 +32,23 @@ Entry template:
 
 ---
 
+## 2026-10-15 - Fix: scan hung at "waiting for the last N scan job(s)" (stage 3)
+**Change:** `stage_deep` in `discovery/lib/scan_local.sh` keeps the PIDs of its own nmap jobs
+and waits only for those (`wait "${pids[@]}"`). The MAX_PARALLEL limit counts live PIDs
+(`kill -0`) instead of using `wait -n`.
+**Why:** the user's scan of 172.16.0.30 (run 20261015-100947) sat at 51 % "waiting for the
+last 1 scan job(s)" for good, although nmap had finished at 10:10:44 (50.8 s, report written).
+**Issues / errors:** hang at the end of stage 3 -> plain `wait` waits for *every* background
+job of the shell, including the sudo keep-alive loop from `sudo_keepalive_start`
+(common.sh), which never ends while sudo stays valid -> wait only for our own PIDs. It only
+showed when sudo was authorised (no keep-alive otherwise). The same bug made `wait -n` in
+the throttle count wrong ("2 running" when only 1 was).
+**Verified:** test script with a never-ending background loop (like the keep-alive) and a
+fake nmap (2 s per host), 5 hosts, MAX_PARALLEL=2: the old code hung (killed by `timeout 20`,
+exit 124). The new code finished in 7 s with 5 host reports and at most 2 jobs at once.
+`bash -n` OK.
+**Not verified / follow-up:** not yet re-run as a real scan from the panel.
+
 ## 2026-10-15 - VM inventory: VMs on Proxmox / libvirt hypervisors (scan-builder step 3)
 **Change:** Network scans list the VMs and containers on hypervisors and join them with the
 hosts found on the network. New `discovery/lib/vm_inventory.py`: (a) Proxmox VE REST API with
