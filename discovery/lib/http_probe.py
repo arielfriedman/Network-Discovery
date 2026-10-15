@@ -5,7 +5,8 @@
 
 nmap only runs its http-title script on ports it recognised as HTTP; apps on
 unusual ports (an Express app on 3001 that nmap calls "nessus?") were left
-unnamed. For every open TCP port in HOSTS_DIR/*.xml whose service is HTTP,
+unnamed. For every open TCP port in HOSTS_DIR/*.xml whose service is HTTP
+(or that nmap could not name, or that speaks TLS),
 or whose fingerprint shows an HTTP reply, this sends one plain GET / (and
 follows up to two redirects on the same host and port), reads at most 64 KB
 and records: final path, status, <title>, Server header. No credentials, no
@@ -27,6 +28,7 @@ import xml.etree.ElementTree as ET
 
 TIMEOUT = 4
 MAX_BYTES = 64 * 1024
+RAW_PRINT = {9100, 9101, 9102, 515}
 
 
 def candidates(hosts_dir: str):
@@ -48,7 +50,11 @@ def candidates(hosts_dir: str):
             name = (s.get("name", "") if s is not None else "")
             tunnel = (s.get("tunnel", "") if s is not None else "")
             fp = " ".join(sc.get("output") or "" for sc in p.findall("script[@id='fingerprint-strings']"))
-            if "http" in name or "HTTP/1." in fp:
+            # also ports nmap could not name ("wpl-analytics?" for Proxmox on 8006) and TLS ports
+            unknown = name.endswith("?") or name in ("", "unknown") or tunnel == "ssl"
+            if int(p.get("portid")) in RAW_PRINT:
+                continue                            # anything sent to a raw print port gets printed
+            if "http" in name or "HTTP/1." in fp or (unknown and "ssh" not in name):
                 tls = tunnel == "ssl" or name in ("https", "ssl/http", "https-alt")
                 yield ip, int(p.get("portid")), tls
 
@@ -78,9 +84,15 @@ def probe(ip: str, port: int, tls: bool) -> dict | None:
                 out.update(status=status, path=path, server=hdr.get("server", "")[:80])
                 loc = hdr.get("location", "")
                 if status in (301, 302, 303, 307, 308) and loc:
-                    m = re.match(r"^(?:https?://([^/]+))?(/[^\s]*)$", loc)
-                    if m and (not m.group(1) or m.group(1).split(":")[0] == ip):
-                        path = m.group(2)[:200]
+                    m = re.match(r"^(?:(https?)://([^/]+))?(/[^\s]*)$", loc)
+                    same = m and (not m.group(2) or m.group(2).split(":")[0] == ip)
+                    if same and m.group(1) == "https" and not use_tls:
+                        use_tls = True                 # plain HTTP sends us to HTTPS on the same port
+                        out["tls"] = True
+                        path = m.group(3)[:200]
+                        continue
+                    if same:
+                        path = m.group(3)[:200]
                         continue
                     out["redirect"] = loc[:200]
                 break

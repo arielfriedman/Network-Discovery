@@ -112,7 +112,8 @@ confidence (`discovery/lib/device_types.py`):
 
 Types: Raspberry Pi, router / Wi-Fi, printer, IP camera, NAS / storage,
 TV / streamer, game console, smart home / IoT, Apple device, phone / tablet,
-Windows PC / server, Linux server (fallback). Two independent medium clues
+Windows PC / server, hypervisor (Proxmox VE, ESXi, XCP-ng banners),
+Linux server (fallback). Two independent medium clues
 count as high; a vendor that also makes ordinary PCs or phones (HP, Samsung)
 counts only as low on its own. More types are added as rules in the same file.
 MAC vendors come from `config/ieee-oui.csv`, fetched from the IEEE by

@@ -68,6 +68,10 @@ def windows_from_build(s: str) -> str | None:
 # ── apps ─────────────────────────────────────────────────────────────────────
 # (name, category, regex on "title | server | product version | headers", ports it is usually on or None)
 APPS = [
+    ("Proxmox VE", "hypervisor", r"proxmox virtual environment|pve-api-daemon", {8006}),
+    ("ProxMenux Monitor", "monitoring", r"proxmenux", None),
+    ("VMware ESXi", "hypervisor", r"vmware esxi|vmware authentication daemon", None),
+    ("XCP-ng / XenServer", "hypervisor", r"xcp-ng|xenserver|xen orchestra", None),
     ("Uptime Kuma", "monitoring", r"uptime kuma", {3001}),
     ("Grafana", "monitoring", r"grafana", None),
     ("Prometheus", "monitoring", r"prometheus", None),
@@ -134,7 +138,8 @@ def _ports(xml_path: str) -> tuple[list[dict], dict]:
 
 def _title(p: dict) -> str:
     t = p["scripts"].get("http-title", "")
-    t = re.sub(r"^\s*Did not follow redirect to .*$", "", t, flags=re.M).strip()
+    t = re.sub(r"^\s*Did not follow redirect to .*$", "", t, flags=re.M)
+    t = re.sub(r"^\s*Site doesn't have a title.*$", "", t, flags=re.M).strip()    # nmap's "no title" note
     return t.splitlines()[0][:100] if t else ""
 
 
@@ -150,10 +155,31 @@ def _ssh_sections(text: str) -> dict:
     return {k: "\n".join(v).strip() for k, v in out.items()}
 
 
+def name_from_cert(ports: list[dict]) -> str | None:
+    """Host name from a TLS certificate (Subject Alternative Name DNS entries, then the
+    common name): self-signed admin pages usually carry the machine's own name."""
+    for p in ports:
+        cert = p["scripts"].get("ssl-cert", "")
+        if not cert:
+            continue
+        names = re.findall(r"DNS:([A-Za-z0-9.-]+)", cert)
+        m = re.search(r"Subject: [^\n]*?commonName=([A-Za-z0-9.-]+)", cert)
+        if m:
+            names.insert(0, m.group(1))
+        names = [n for n in names if n.lower() not in ("localhost", "localhost.localdomain") and "*" not in n]
+        if names:
+            return next((n for n in names if "." in n), names[0])[:80]
+    return None
+
+
 def build(h: dict, xml_path: str | None, ssh_text: str = "", http: dict | None = None) -> None:
     """Fill in os / apps / system / findings on host dict h."""
     ports, hostscripts = _ports(xml_path) if xml_path and os.path.exists(xml_path) else ([], {})
     apps, findings, os_votes = [], [], []
+    if not h.get("hostname"):
+        name = name_from_cert(ports)
+        if name:
+            h["hostname"], h["hostname_source"] = name, "TLS certificate"
 
     # OS: nmap's own fingerprint (root) stays first; banners and protocols otherwise
     if h.get("os"):

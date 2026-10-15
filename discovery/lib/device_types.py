@@ -111,6 +111,9 @@ RULES = [
     ("Phone / tablet", "names", r"iphone|ipad|android|galaxy|pixel|oneplus|redmi|xiaomi|huawei-p|sm-[a-z]\d", "medium", "phone-style name"),
     ("Phone / tablet", "random", r"yes", "low", "randomised MAC address (typical for phones)"),
 
+    ("Hypervisor", "apps", r"proxmox ve|vmware esxi|xcp-ng", "high", "hypervisor management service"),
+    ("Hypervisor", "banner", r"proxmox virtual environment|vmware esxi", "high", "service banner"),
+
     ("Windows PC / server", "os", r"windows", "high", "Windows identified"),
     ("Windows PC / server", "ports", r" 3389 ", "medium", "Remote Desktop port"),
     ("Windows PC / server", "ports", r" 135 .* 445 | 445 .* 135 ", "medium", "Windows RPC + file sharing ports"),

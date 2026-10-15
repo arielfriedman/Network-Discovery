@@ -224,6 +224,24 @@ PYEOF
 }
 
 # ---------------------------------------------------------------- stage 3
+# Port option for the deep scan. nmap can't combine --top-ports with -p, so
+# "--top-ports N" plus EXTRA_PORTS becomes one -p list: the N most common TCP
+# ports from nmap's own nmap-services, plus the extras.
+deep_ports() {
+  local svc="" d top
+  for d in "$(nmap --datadir 2>/dev/null)" /usr/share/nmap /usr/local/share/nmap; do
+    [[ -r "$d/nmap-services" ]] && { svc="$d/nmap-services"; break; }
+  done
+  if [[ "$NMAP_PORTS" =~ ^--top-ports\ ([0-9]+)$ && -n "${EXTRA_PORTS:-}" && -n "$svc" ]]; then
+    top=$(awk '$2 ~ /\/tcp$/ { split($2, a, "/"); print $3, a[1] }' "$svc" \
+          | sort -k1,1gr -k2,2n | head -n "${BASH_REMATCH[1]}" | awk '{ print $2 }')
+    # shellcheck disable=SC2086
+    printf -- '-p %s' "$(printf '%s\n' $top ${EXTRA_PORTS//,/ } | grep -E '^[0-9]+$' | sort -nu | paste -sd,)"
+  else
+    printf '%s' "$NMAP_PORTS"
+  fi
+}
+
 # Deep per-host scan: services, versions, OS guess, default scripts.
 stage_deep() {
   [[ "$DO_DEEP" == 1 ]] || { info "deep scan disabled"; return 0; }
@@ -240,7 +258,7 @@ stage_deep() {
 
   local -a opts=(-sV --version-intensity 5 "-T$NMAP_TIMING" -n --open)
   # shellcheck disable=SC2206
-  opts+=($NMAP_PORTS)
+  opts+=($(deep_ports))
   if can_root; then
     opts+=(-sS -O --osscan-limit)          # SYN scan + OS fingerprint need root
   else

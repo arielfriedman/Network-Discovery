@@ -269,6 +269,11 @@ unmatched = [v for v in vms if v.get("status") == "running" and not v.get("host_
 if unmatched:
     notable.append({"level": "info", "text": f"{len(unmatched)} running VM(s) not seen on the scanned network: "
                     + ", ".join(v["name"] for v in unmatched[:5]) + (" ..." if len(unmatched) > 5 else "")})
+hv_ips = {hv["host"] for hv in hypervisors}
+for h in hosts.values():
+    if h.get("device_type") == "Hypervisor" and h["ip"] not in hv_ips:
+        notable.append({"level": "info", "text": f"{h['ip']}: hypervisor seen from the network only - add a Proxmox "
+                        "card or an SSH login to it to list its VMs, CPU, memory and disks"})
 guessed = [h for h in hosts.values() if h.get("vm_guess")]
 if guessed and not hypervisors:
     notable.append({"level": "info", "text": f"{len(guessed)} host(s) look like VMs by their MAC address "

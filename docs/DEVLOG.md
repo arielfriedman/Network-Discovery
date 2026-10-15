@@ -32,6 +32,33 @@ Entry template:
 
 ---
 
+## 2026-10-15 - More detail from a scan without logins (hostname, Proxmox, extra ports)
+**Change:** (1) Host name from the TLS certificate (SAN DNS names, then CN) when DNS, mDNS and
+NetBIOS give none (`host_profile.name_from_cert`, `hostname_source: "TLS certificate"`).
+(2) Apps Proxmox VE, ProxMenux Monitor, VMware ESXi, XCP-ng, and a device type "Hypervisor"
+(`device_types.py`) from their banners/titles, plus a note in the report that a Proxmox card or an
+SSH login is needed for VMs, CPU, memory and disks. (3) nmap's "Site doesn't have a title" note
+is no longer listed as an app. (4) The deep scan also scans `EXTRA_PORTS` (settings.conf: 8006,
+8007, 8123, 32400, Docker/Kubernetes APIs, MQTT ... 19 ports outside nmap's top 1000):
+`deep_ports()` turns "--top-ports N" + extras into one `-p` list, because nmap can't combine them.
+(5) `http_probe.py` also tries ports nmap could not name ("wpl-analytics?") or that speak TLS, skips
+raw print ports (9100-9102, 515), and follows a plain-HTTP to HTTPS redirect on the same port.
+**Why:** the user's scan of 172.16.0.30 (Proxmox host) showed almost nothing: no name, "Linux
+server", and a junk app "Site doesn't have a title.". The Proxmox web UI on 8006 was never
+scanned (not in the top 1000).
+**Issues / errors:** first port list differed from nmap's top 1000 by ~70 ports -> nmap breaks
+frequency ties by lower port number, my `sort -rg` didn't -> `sort -k1,1gr -k2,2n`. Port 8006
+was skipped by the title probe -> nmap names it "wpl-analytics?" -> probe unnamed ports too. 8006 over
+plain HTTP answered only 301 to https -> follow that redirect with TLS.
+**Verified:** `deep_ports` list = nmap's own `--top-ports 1000` list (compared with `nmap -v -oG`)
+plus the 19 extras, nothing missing. `-p-` and empty EXTRA_PORTS stay unchanged. Rebuilt
+findings of run 20261015-102002 (plus port 8006 as nmap names it): hostname pve.fritz.local (TLS
+certificate), type Hypervisor (high), apps Proxmox VE (3128, 8006) and ProxMenux Monitor, no junk
+app, the new note shown. Live probe of 172.16.0.30:8006 -> "pve - Proxmox Virtual Environment".
+test_vm_inventory and test_cloud_api (20/20) pass; the stage 3 hang test still passes.
+**Not verified / follow-up:** no full new scan from the panel yet. Without logins a scan can only
+see ports, banners and page titles; VMs/CPU/RAM/disks need the Proxmox card or an SSH login.
+
 ## 2026-10-15 - Fix: scan hung at "waiting for the last N scan job(s)" (stage 3)
 **Change:** `stage_deep` in `discovery/lib/scan_local.sh` keeps the PIDs of its own nmap jobs
 and waits only for those (`wait "${pids[@]}"`). The MAX_PARALLEL limit counts live PIDs
