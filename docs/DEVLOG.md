@@ -32,6 +32,23 @@ Entry template:
 
 ---
 
+## 2026-10-16 - Example network drawing in README and docs (this commit)
+**Change:** README and `docs/DIAGRAMS.md` show a picture of the Network drawing feature
+(`docs/images/network-drawing.png`, plus the SVG preview). It is made from made-up example data
+(`docs/examples/example-findings.json`, 192.168.1.0/24, 10 hosts, a Proxmox host with 2 running and
+1 stopped guest), and the matching `docs/examples/example-network.drawio` is included. DIAGRAMS.md has
+the command to make them again. `diagrams.py`: the title skips empty parts.
+**Why:** the user asked to put the drawing feature in the repo with an image. The feature itself was
+already committed (7b1ceaa, cce326a); the README had no picture of it. Example data instead of a real
+scan, so no real host names, IPs or MAC addresses go into the repo (it may go public).
+**Issues / errors:** the title read "SentinelScan · 192.168.1.0/24 · · 10 hosts" -> a scan without a
+`started` time left an empty part between the dots -> empty parts are now left out.
+**Verified:** generated with draw.io 32.4.1 CLI (scratchpad, not installed): PNG 3781x1211, looked at it
+- internet, gateway, LAN line, hypervisor holding its VMs (stopped one dashed), groups by type, scanner
+bold. Title now "SentinelScan · 192.168.1.0/24 · 10 hosts"; a real scan's title still includes the time
+("... · 2026-10-15 07:46 · 16 hosts"). `py_compile` ok.
+**Not verified / follow-up:** how GitLab renders the README image (repo is private; check in the browser).
+
 ## 2026-10-16 - Drawings checked in the real draw.io; installer --drawio
 **Change:** `diagrams.export`: fixed the CLI arguments (`-s 2` was inserted between `-b` and its value)
 and PDFs now use `-a --crop` (every page, each cropped to its drawing). Lines from the groups to the LAN

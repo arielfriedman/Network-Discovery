@@ -7,6 +7,10 @@ and configure network devices with guided wizards.
 
 > **Scan and configure only networks and devices you own or are authorised to manage.**
 
+![Network drawing of an example scan](docs/images/network-drawing.png)
+
+*Network drawing made from a scan (example data, `docs/examples/`). See `docs/DIAGRAMS.md`.*
+
 ## Install
 
 On Debian, Ubuntu or Linux Mint:

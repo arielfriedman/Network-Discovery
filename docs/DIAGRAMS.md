@@ -3,6 +3,22 @@
 After a network scan, **Network drawing** (on the Scan page when the scan
 finishes, and on every saved network scan in History) draws what the scan found.
 
+![Network drawing of an example scan](images/network-drawing.png)
+
+The picture above comes from made-up example data, not a real network:
+`examples/example-findings.json` (a scan result), `examples/example-network.drawio`
+(open it in draw.io or on diagrams.net), `images/network-drawing.svg` (the dashboard
+preview) and `images/network-drawing.png` (draw.io CLI export). To make them again
+after changing `panel/diagrams.py`:
+
+```bash
+python3 -c "import json,sys; sys.path.insert(0,'panel'); import diagrams as D
+d=json.load(open('docs/examples/example-findings.json'))
+open('docs/examples/example-network.drawio','w').write(D.drawio(d))
+open('docs/images/network-drawing.svg','w').write(D.svg(d))
+open('docs/images/network-drawing.png','wb').write(D.export(d,'png'))"   # PNG needs draw.io desktop
+```
+
 ## What is drawn
 
 Page 1, **Network**: the internet, the gateway, the local network line and every

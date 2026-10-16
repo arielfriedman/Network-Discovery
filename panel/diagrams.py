@@ -233,7 +233,8 @@ def network_layout(d: dict) -> Layout:
     bottom = max([n["y"] + n["h"] for n in L.nodes] or [bus_y + 100])
     L.width = left + bus_w + 40
     L.height = bottom + 40
-    title = f"SentinelScan · {net} · {meta.get('started', '')[:16].replace('T', ' ')} · {len(hosts)} hosts"
+    when = (meta.get("started") or "")[:16].replace("T", " ")
+    title = " · ".join(x for x in ("SentinelScan", net, when, f"{len(hosts)} hosts") if x)
     L.node(x=40, y=10, w=900, h=24, lines=[title], fill="none", stroke="none", kind="title")
     return L
 

@@ -1,0 +1,295 @@
+{
+ "meta": {
+  "run_id": "example",
+  "target": "192.168.1.0/24",
+  "mode": "network",
+  "local_net": "192.168.1.0/24",
+  "gateway": "192.168.1.1",
+  "scanner_ip": "192.168.1.51"
+ },
+ "stats": {
+  "hosts": 10
+ },
+ "hosts": [
+  {
+   "ip": "192.168.1.1",
+   "hostname": "router.home",
+   "device_type": "Router / Wi-Fi",
+   "vendor": "Example Networks",
+   "os": null,
+   "mac": null,
+   "ports": [
+    {
+     "port": "53/tcp",
+     "service": "domain"
+    },
+    {
+     "port": "80/tcp",
+     "service": "http"
+    },
+    {
+     "port": "443/tcp",
+     "service": "https"
+    }
+   ],
+   "apps": [],
+   "device_confidence": "high"
+  },
+  {
+   "ip": "192.168.1.10",
+   "hostname": "pve.home",
+   "device_type": "Hypervisor",
+   "vendor": null,
+   "os": "Proxmox VE 9",
+   "mac": null,
+   "ports": [
+    {
+     "port": "22/tcp",
+     "service": "ssh"
+    },
+    {
+     "port": "8006/tcp",
+     "service": "https"
+    }
+   ],
+   "apps": [],
+   "device_confidence": "high"
+  },
+  {
+   "ip": "192.168.1.11",
+   "hostname": "nas.home",
+   "device_type": "NAS / storage",
+   "vendor": "Example Storage",
+   "os": null,
+   "mac": null,
+   "ports": [
+    {
+     "port": "22/tcp",
+     "service": "ssh"
+    },
+    {
+     "port": "445/tcp",
+     "service": "microsoft-ds"
+    },
+    {
+     "port": "5000/tcp",
+     "service": "http"
+    }
+   ],
+   "apps": [],
+   "device_confidence": "high"
+  },
+  {
+   "ip": "192.168.1.20",
+   "hostname": "docker-vm",
+   "device_type": "Linux server",
+   "vendor": null,
+   "os": "Ubuntu 24.04",
+   "mac": null,
+   "ports": [
+    {
+     "port": "22/tcp",
+     "service": "ssh"
+    },
+    {
+     "port": "80/tcp",
+     "service": "http"
+    },
+    {
+     "port": "9000/tcp",
+     "service": "http"
+    }
+   ],
+   "apps": [],
+   "device_confidence": "high",
+   "vm": {
+    "name": "docker-vm"
+   }
+  },
+  {
+   "ip": "192.168.1.21",
+   "hostname": "pihole",
+   "device_type": "Linux server",
+   "vendor": null,
+   "os": "Debian 12",
+   "mac": null,
+   "ports": [
+    {
+     "port": "22/tcp",
+     "service": "ssh"
+    },
+    {
+     "port": "53/tcp",
+     "service": "domain"
+    },
+    {
+     "port": "80/tcp",
+     "service": "http"
+    }
+   ],
+   "apps": [],
+   "device_confidence": "high",
+   "vm": {
+    "name": "pihole"
+   }
+  },
+  {
+   "ip": "192.168.1.50",
+   "hostname": "desktop-01",
+   "device_type": "Windows PC / server",
+   "vendor": null,
+   "os": "Windows 11",
+   "mac": null,
+   "ports": [
+    {
+     "port": "135/tcp",
+     "service": "msrpc"
+    },
+    {
+     "port": "445/tcp",
+     "service": "microsoft-ds"
+    }
+   ],
+   "apps": [],
+   "device_confidence": "high"
+  },
+  {
+   "ip": "192.168.1.51",
+   "hostname": "laptop",
+   "device_type": "Linux server",
+   "vendor": null,
+   "os": "Linux Mint 22",
+   "mac": null,
+   "ports": [],
+   "apps": [],
+   "device_confidence": "high"
+  },
+  {
+   "ip": "192.168.1.60",
+   "hostname": "printer",
+   "device_type": "Printer",
+   "vendor": "Example Printers",
+   "os": null,
+   "mac": null,
+   "ports": [
+    {
+     "port": "80/tcp",
+     "service": "http"
+    },
+    {
+     "port": "631/tcp",
+     "service": "ipp"
+    },
+    {
+     "port": "9100/tcp",
+     "service": "jetdirect"
+    }
+   ],
+   "apps": [],
+   "device_confidence": "high"
+  },
+  {
+   "ip": "192.168.1.70",
+   "hostname": "homeassistant",
+   "device_type": "Raspberry Pi",
+   "vendor": "Raspberry Pi Trading",
+   "os": null,
+   "mac": null,
+   "ports": [
+    {
+     "port": "22/tcp",
+     "service": "ssh"
+    },
+    {
+     "port": "8123/tcp",
+     "service": "http"
+    }
+   ],
+   "apps": [],
+   "device_confidence": "high"
+  },
+  {
+   "ip": "192.168.1.80",
+   "hostname": "camera-door",
+   "device_type": "IP camera",
+   "vendor": "Example Cameras",
+   "os": null,
+   "mac": null,
+   "ports": [
+    {
+     "port": "80/tcp",
+     "service": "http"
+    },
+    {
+     "port": "554/tcp",
+     "service": "rtsp"
+    }
+   ],
+   "apps": [],
+   "device_confidence": "high"
+  }
+ ],
+ "vms": [
+  {
+   "hypervisor": "192.168.1.10",
+   "id": 101,
+   "kind": "qemu",
+   "name": "docker-vm",
+   "status": "running",
+   "vcpus": 4,
+   "memory_mb": 8192,
+   "host_ip": "192.168.1.20",
+   "guest": {
+    "os": "Ubuntu 24.04"
+   },
+   "disks": [
+    {
+     "id": "scsi0",
+     "size_gb": 64
+    }
+   ]
+  },
+  {
+   "hypervisor": "192.168.1.10",
+   "id": 102,
+   "kind": "lxc",
+   "name": "pihole",
+   "status": "running",
+   "vcpus": 1,
+   "memory_mb": 512,
+   "host_ip": "192.168.1.21",
+   "guest": {
+    "os": "Debian 12"
+   },
+   "disks": [
+    {
+     "id": "rootfs",
+     "size_gb": 8
+    }
+   ]
+  },
+  {
+   "hypervisor": "192.168.1.10",
+   "id": 103,
+   "kind": "qemu",
+   "name": "win-test",
+   "status": "stopped",
+   "vcpus": 2,
+   "memory_mb": 4096,
+   "disks": [
+    {
+     "id": "sata0",
+     "size_gb": 80
+    }
+   ]
+  }
+ ],
+ "hypervisors": [
+  {
+   "host": "192.168.1.10",
+   "platform": "proxmox",
+   "version": "9.0",
+   "vms": 3
+  }
+ ]
+}
