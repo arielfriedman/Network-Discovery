@@ -32,6 +32,24 @@ Entry template:
 
 ---
 
+## 2026-10-16 - User guide (this commit)
+**Change:** new `docs/USER_GUIDE.md`, linked at the top of the README: ground rules, install and
+open, the pages, a first scan step by step, reading results and the drawing, credential cards and
+the vault, where every file is kept, normal vs root mode, common problems (port 8765 in use, page
+not opening, scan looks stuck, SSH login errors, no admin rights, empty History, no PDF button,
+rootkit false alarm), updating and removing. README: dropped the note that the curl line needs the
+repo to be public (it is public now).
+**Why:** the user asked for a basic manual so new users understand what everything is and where it
+is; the existing docs assume you already know the project.
+**Issues / errors:** first draft said the menu has five pages -> the drawing is a button, not a menu
+item (nav in `panel/web/common.js` has four) -> corrected.
+**Verified:** every button label, path, command and message in the guide checked against the code
+(`panel/web/*.html`, `common.js`, `creds.js`, `serve.py` port message, `install.sh` DB names and
+options, `discovery/README.md`). Anonymous `git clone https://gitlab.com/fritzizi/network-discovery.git`
+works and the raw install.sh URL answers 200 (repo public).
+**Not verified / follow-up:** the "Remove" steps were not run. The commit-email history rewrite is
+prepared but not pushed yet (needs the user's approval for a force-push).
+
 ## 2026-10-16 - Example network drawing in README and docs (this commit)
 **Change:** README and `docs/DIAGRAMS.md` show a picture of the Network drawing feature
 (`docs/images/network-drawing.png`, plus the SVG preview). It is made from made-up example data

@@ -7,6 +7,9 @@ and configure network devices with guided wizards.
 
 > **Scan and configure only networks and devices you own or are authorised to manage.**
 
+**New here? Start with the [user guide](docs/USER_GUIDE.md):** install, the pages, your first scan,
+the vault, where files are kept, root mode, and fixes for common problems.
+
 ![Network drawing of an example scan](docs/images/network-drawing.png)
 
 *Network drawing made from a scan (example data, `docs/examples/`). See `docs/DIAGRAMS.md`.*
@@ -44,9 +47,6 @@ Options: `--root` (the service runs as root, so scans get the ARP sweep and OS d
 
 Manage the service with `sudo systemctl status|restart|stop sentinelscan`
 (logs: `journalctl -u sentinelscan`).
-
-> The curl line works once the repository is public. While it is private, GitLab answers
-> with its sign-in page; clone with your GitLab login and run `./install.sh` instead.
 
 ## Run
 
