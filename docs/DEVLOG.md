@@ -32,6 +32,28 @@ Entry template:
 
 ---
 
+## 2026-10-16 - Drawings checked in the real draw.io; installer --drawio
+**Change:** `diagrams.export`: fixed the CLI arguments (`-s 2` was inserted between `-b` and its value)
+and PDFs now use `-a --crop` (every page, each cropped to its drawing). Lines from the groups to the LAN
+line carry draw.io exit/entry points, so draw.io routes them where the SVG preview draws them.
+`install.sh --drawio`: latest official draw.io .deb from github.com/jgraph/drawio-desktop releases,
+SHA-256 checked against the release's `Files-SHA256-Hashes.txt`, installed with xvfb; amd64/arm64.
+**Why:** the open "not verified" items of the drawing feature (real draw.io, CLI PNG/PDF), and the
+PDF button needs the app.
+**Issues / errors:** power outage: /tmp was wiped (scratchpad test files and the scratch PostgreSQL are
+gone); the repo was clean and pushed. Real draw.io export failed with "input file/directory not found:
+10" -> argument order bug above. In draw.io all group lines met the LAN line at one point (draw.io ignores
+waypoints when it routes to a cell's centre) -> pinned exit/entry points. The first PDF was split over 4 A4
+sheets -> `--crop`.
+**Verified:** draw.io desktop 32.4.1, official .deb, SHA-256 matched the published list, unpacked into the
+scratchpad (not installed; test wrapper adds `--no-sandbox` because the unpacked chrome-sandbox isn't
+setuid). Sample scan (16 hosts + 3 VMs): PNG 3093x1907 in 3.1 s, ends with a complete IEND chunk; PDF 2 pages
+(Network, Virtual machines), cropped. Looked at both: boxes, groups, labels and straight lines to the LAN
+line as in the preview. Installer block with apt replaced by echo: real download + hash match -> "installed";
+forced hash mismatch -> "did not match ... not installed"; `--dry-run --drawio` prints the plan.
+**Not verified / follow-up:** a real `sudo ./install.sh --drawio` (apt install of the .deb), export from the
+panel running as a systemd service (xvfb path).
+
 ## 2026-10-16 - Network drawings of a scan (draw.io)
 **Change:** new `panel/diagrams.py`: from a network scan's findings.json, one layout written as
 a `.drawio` file (page "Network": internet, gateway, LAN line, hosts grouped by device type,

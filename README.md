@@ -34,7 +34,7 @@ The installer asks for your sudo password once, then:
 
 It is safe to run again; that is also how you update: `git pull && ./install.sh`.
 Options: `--root` (the service runs as root, so scans get the ARP sweep and OS detection),
-`--no-service` (start it yourself with `./start.sh`), `--no-db` (no PostgreSQL, no history),
+`--no-service` (start it yourself with `./start.sh`), `--drawio` (draw.io desktop for PDF drawings), `--no-db` (no PostgreSQL, no history),
 `--no-tools` (skip nmap and friends), `--no-backup`, `--dry-run`. With curl:
 `curl -fsSL .../install.sh | bash -s -- --root`.
 

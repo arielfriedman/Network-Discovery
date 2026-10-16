@@ -20,6 +20,9 @@
 #   --no-backup   don't schedule the nightly database backup
 #   --no-tools    skip the network scanning tools (nmap, arp-scan, ...)
 #   --no-service  don't install the service; start it yourself with ./start.sh
+#   --drawio      also install the draw.io desktop app (official .deb from
+#                 github.com/jgraph/drawio-desktop, SHA-256 checked) for PDF
+#                 and high-resolution PNG of the network drawings, plus xvfb
 #   --root        run the service as root: scans get ARP sweep + OS detection
 #                 (the Actions terminal stays your own user's shell)
 #   --dry-run     print what would be done, change nothing
@@ -31,7 +34,7 @@ set -euo pipefail
 REPO_URL="${SENTINEL_REPO:-https://gitlab.com/fritzizi/network-discovery.git}"
 DB_NAME=sentinel
 DB_USER=sentinel
-DO_DB=1 DO_TOOLS=1 DO_BACKUP=1 DO_SERVICE=1 AS_ROOT=0 DRY=0
+DO_DB=1 DO_TOOLS=1 DO_BACKUP=1 DO_SERVICE=1 AS_ROOT=0 DO_DRAWIO=0 DRY=0
 for a in "$@"; do
   case "$a" in
     --no-db) DO_DB=0 ;;
@@ -39,8 +42,9 @@ for a in "$@"; do
     --no-backup) DO_BACKUP=0 ;;
     --no-service) DO_SERVICE=0 ;;
     --root) AS_ROOT=1 ;;
+    --drawio) DO_DRAWIO=1 ;;
     --dry-run) DRY=1 ;;
-    -h|--help) sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,33p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "unknown option: $a (try --help)" >&2; exit 2 ;;
   esac
 done
@@ -184,6 +188,49 @@ elif as_owner bash discovery/update-vendors.sh >/dev/null 2>&1; then
   ok "current IEEE vendor registry saved (refresh any time: discovery/update-vendors.sh)"
 else
   warn "could not download it (offline?); the copies from arp-scan/nmap are used instead"
+fi
+
+# ── 4b. draw.io desktop (optional, --drawio) ──────────────────────────────
+# PDF / high-resolution PNG of the network drawings. Not in Debian/Ubuntu: the
+# official .deb comes from the project's GitHub releases and is checked against
+# the SHA-256 list published with the same release.
+if (( DO_DRAWIO )); then
+  say "draw.io desktop"
+  if command -v drawio >/dev/null; then
+    ok "already installed ($(dpkg-query -W -f='${Version}' drawio 2>/dev/null || echo present))"
+  elif (( DRY )); then
+    echo "  [dry-run] would download the latest drawio .deb from github.com/jgraph/drawio-desktop, check its SHA-256, install it and xvfb"
+  else
+    case "$(dpkg --print-architecture)" in
+      amd64) ARCH=amd64 ;; arm64) ARCH=arm64 ;;
+      *) ARCH="" ;;
+    esac
+    DTMP="$(mktemp -d)"
+    if [[ -z "$ARCH" ]]; then
+      warn "no draw.io package for $(dpkg --print-architecture); the drawings still work (.drawio, SVG, PNG)"
+    elif ! TAG="$(curl -fsSL --max-time 20 https://api.github.com/repos/jgraph/drawio-desktop/releases/latest \
+                 | python3 -c 'import json,sys; print(json.load(sys.stdin)["tag_name"])')"; then
+      warn "could not reach GitHub to find the latest draw.io release; skipped"
+    else
+      VER="${TAG#v}" DEB="drawio-$ARCH-${TAG#v}.deb"
+      URL_D="https://github.com/jgraph/drawio-desktop/releases/download/$TAG"
+      if curl -fsSL --max-time 600 -o "$DTMP/$DEB" "$URL_D/$DEB" \
+         && curl -fsSL --max-time 30 -o "$DTMP/hashes.txt" "$URL_D/Files-SHA256-Hashes.txt"; then
+        WANT="$(awk -v f="$DEB" '$2 == f {print $1}' "$DTMP/hashes.txt")"
+        GOT="$(sha256sum "$DTMP/$DEB" | cut -d' ' -f1)"
+        if [[ -n "$WANT" && "$WANT" == "$GOT" ]]; then
+          chmod 644 "$DTMP/$DEB"; chmod 755 "$DTMP"      # apt's _apt user must read it
+          run $SUDO env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "$DTMP/$DEB" xvfb >/dev/null
+          ok "draw.io $VER installed (SHA-256 checked) - PDF export is on in the drawing dialog"
+        else
+          warn "draw.io download did not match the published SHA-256 - not installed"
+        fi
+      else
+        warn "could not download draw.io $VER; skipped"
+      fi
+    fi
+    rm -rf -- "$DTMP"
+  fi
 fi
 
 # ── 5. the dashboard as a service ─────────────────────────────────────────

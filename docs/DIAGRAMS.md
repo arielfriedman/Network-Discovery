@@ -28,6 +28,14 @@ In draw.io, hover a box for its full details (ports with versions, apps, MAC).
 | PDF | all pages | draw.io desktop on this machine (`xvfb` too when the panel runs as a service without a display) |
 | Open in diagrams.net | the drawing in the diagrams.net editor | internet; the drawing is inside the link after `#`, which browsers don't send to the server |
 
+## Getting draw.io desktop (for PDF)
+
+`./install.sh --drawio` downloads the latest official `.deb` from
+github.com/jgraph/drawio-desktop/releases, checks it against the
+`Files-SHA256-Hashes.txt` published with that release, and installs it with
+`xvfb` (needed when the panel runs as a service without a screen). Without it
+everything except PDF still works.
+
 ## Why not the drawio-skill
 
 The drawio-skill (Agents365-ai/drawio-skill) is a set of instructions for an AI

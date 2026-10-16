@@ -125,9 +125,10 @@ class Layout:
         self.nodes.append(kw)
         return kw["id"]
 
-    def edge(self, source, target, points, label=""):
+    def edge(self, source, target, points, label="", pins=""):
+        # pins: draw.io exit/entry points, so draw.io routes the line where the SVG draws it
         self.edges.append({"id": f"e{len(self.edges) + 2}", "source": source, "target": target,
-                           "points": points, "label": label})
+                           "points": points, "label": label, "pins": pins})
 
 
 def _group_size(n: int) -> tuple[int, int]:
@@ -189,11 +190,13 @@ def network_layout(d: dict) -> Layout:
                 + ([_short(gw_h.get("vendor"))] if gw_h and gw_h.get("vendor") else [])) if gw else ["Gateway", "unknown"]
     gwid = L.node(x=40, y=bus_y - 110, w=180, h=80, lines=gw_lines[:4], fill=COLORS["Router / Wi-Fi"][0],
                   stroke=COLORS["Router / Wi-Fi"][1], kind="box", tooltip=_tooltip(gw_h) if gw_h else "")
-    L.edge(inet, gwid, [(130, bus_y - 140), (130, bus_y - 110)])
+    L.edge(inet, gwid, [(130, bus_y - 140), (130, bus_y - 110)],
+           pins="exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;")
     net = meta.get("local_net") or meta.get("target") or "local network"
     bus = L.node(x=left, y=bus_y, w=bus_w, h=BUS_H, lines=[f"LAN {net}"], fill="#666666", stroke="#666666",
                  kind="bus")
-    L.edge(gwid, bus, [(220, bus_y - 70), (left - 40, bus_y - 70), (left - 40, bus_y + BUS_H / 2), (left, bus_y + BUS_H / 2)])
+    L.edge(gwid, bus, [(220, bus_y - 70), (left - 40, bus_y - 70), (left - 40, bus_y + BUS_H / 2), (left, bus_y + BUS_H / 2)],
+           pins="exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;")
 
     def place(bs, is_above):
         x = left
@@ -216,10 +219,13 @@ def network_layout(d: dict) -> Layout:
                     L.node(x=bx, y=by, w=BOX_W, h=BOX_H, lines=_host_lines(obj, me), parent=gid, kind="box",
                            fill="#ffffff", stroke=s2, bold=obj["ip"] == me, tooltip=_tooltip(obj))
             cx = x + w / 2
+            ex = round((cx - left) / bus_w, 4)               # where on the LAN line it joins
             if is_above:
-                L.edge(gid, bus, [(cx, y + h), (cx, bus_y)])
+                L.edge(gid, bus, [(cx, y + h), (cx, bus_y)],
+                       pins=f"exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX={ex};entryY=0;entryDx=0;entryDy=0;")
             else:
-                L.edge(gid, bus, [(cx, y), (cx, bus_y + BUS_H)])
+                L.edge(gid, bus, [(cx, y), (cx, bus_y + BUS_H)],
+                       pins=f"exitX=0.5;exitY=0;exitDx=0;exitDy=0;entryX={ex};entryY=1;entryDx=0;entryDy=0;")
             x += w + GAP * 2
 
     place(above, True)
@@ -314,7 +320,7 @@ def _mxcells(L: Layout) -> str:
     for e in L.edges:
         pts = "".join(f'<mxPoint x="{x:g}" y="{y:g}"/>' for x, y in e["points"][1:-1])
         out.append(f'<mxCell id="{e["id"]}" value={quoteattr(e["label"])} style="edgeStyle=orthogonalEdgeStyle;'
-                   f'rounded=1;orthogonalLoop=1;jettySize=auto;html=0;endArrow=none;strokeWidth=2;strokeColor=#666666;" '
+                   f'rounded=1;orthogonalLoop=1;jettySize=auto;html=0;endArrow=none;strokeWidth=2;strokeColor=#666666;{e["pins"]}" '
                    f'edge="1" parent="1" source="{e["source"]}" target="{e["target"]}">'
                    f'<mxGeometry relative="1" as="geometry">'
                    + (f'<Array as="points">{pts}</Array>' if pts else "") + '</mxGeometry></mxCell>')
@@ -413,11 +419,8 @@ def export(d: dict, fmt: str) -> bytes:
         src, dst = os.path.join(tmp, "scan.drawio"), os.path.join(tmp, f"scan.{fmt}")
         with open(src, "w", encoding="utf-8") as fh:
             fh.write(drawio(d))
-        cmd = [exe, "-x", "-f", fmt, "-b", "10", "-o", dst, src]
-        if fmt == "png":
-            cmd[5:5] = ["-s", "2"]
-        else:
-            cmd[5:5] = ["-a"]                                     # all pages
+        # png: page 1 at 2x; pdf: all pages (-a), each cropped to its drawing (--crop)
+        cmd = [exe, "-x", "-f", fmt, "-b", "10"] + (["-s", "2"] if fmt == "png" else ["-a", "--crop"]) + ["-o", dst, src]
         if os.geteuid() == 0:
             cmd.append("--no-sandbox")                            # Electron refuses root without it
         if not os.environ.get("DISPLAY") and not os.environ.get("WAYLAND_DISPLAY"):
