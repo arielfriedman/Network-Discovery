@@ -81,8 +81,21 @@ make_secure_tmp() {
   chmod 700 "$SECURE_TMP"
 }
 
+# Run with sudo: files this run created belong to root. Hand them back to the
+# user who ran sudo, or the next normal run / the panel can't use them.
+give_back_files() {
+  [[ $EUID -eq 0 && -n "${SUDO_UID:-}" && "${SUDO_UID}" != 0 ]] || return 0
+  local p
+  for p in "${RUN_DIR:-}" "$BASE_DIR/reports/latest" "$BASE_DIR/config"; do
+    [[ -n "$p" && ( -e "$p" || -L "$p" ) ]] || continue
+    find "$p" -user 0 -exec chown -h "$SUDO_UID:${SUDO_GID:-$SUDO_UID}" {} + 2>/dev/null
+  done
+  return 0
+}
+
 cleanup() {
   local rc=$?
+  give_back_files
   wipe_secrets
   [[ -n "${SECURE_TMP:-}" && -d "$SECURE_TMP" ]] && rm -rf -- "$SECURE_TMP"
   return $rc

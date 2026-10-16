@@ -156,12 +156,12 @@ stage_passive() {
 
   if have avahi-browse; then
     run_tool "mDNS / Bonjour (avahi)" "$RAW/20-mdns.txt" \
-      timeout 25 avahi-browse -altrp || true
+      timeout --foreground 25 avahi-browse -altrp || true
   fi
 
   if have nbtscan && [[ -s "$WORK/hosts.list" ]]; then
     run_tool "NetBIOS names" "$RAW/21-netbios.txt" \
-      timeout 120 nbtscan -q -s $'\t' -f "$WORK/hosts.list" || true
+      timeout --foreground 120 nbtscan -q -s $'\t' -f "$WORK/hosts.list" || true
   fi
 
   run_tool "SSDP / UPnP discovery" "$RAW/22-ssdp.txt" python3 - <<'PYEOF' || true
@@ -287,7 +287,7 @@ stage_deep() {
     (
       # timeout goes inside as_root: as_root is a shell function, and
       # `timeout as_root ...` fails with "No such file" (exit 127)
-      as_root timeout "$HOST_SCAN_TIMEOUT" \
+      as_root timeout --foreground "$HOST_SCAN_TIMEOUT" \
         nmap "${opts[@]}" -oN "$RAW/hosts/$safe.txt" -oX "$RAW/hosts/$safe.xml" "$ip" \
         >/dev/null 2>"$RAW/hosts/$safe.err" || true
       [[ -s "$RAW/hosts/$safe.err" ]] || rm -f -- "$RAW/hosts/$safe.err"

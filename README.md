@@ -40,6 +40,12 @@ Options: `--no-db` (no PostgreSQL, no history), `--no-tools` (skip nmap and frie
 sudo ./start.sh     # same, with the checks that need root (ARP sweep, OS detection, full host audit)
 ```
 
+Stop a running panel first (Ctrl-C) - only one can use port 8765, and the
+second start says so. Started with sudo, the browser is not opened for you
+(open the address yourself), the Actions terminal is still your own user's
+shell, and files the panel and its scans write are handed back to your user.
+SSH logins to other machines (credential cards) don't need sudo here.
+
 | Page | What it does |
 |---|---|
 | **Scan** | pick *this host*, *the network* or *the cloud* (AWS, Azure, GCP, Kubernetes, DigitalOcean, Linode, Hetzner, Vultr, Scaleway, Cloudflare, IBM Cloud, OVHcloud, Alibaba Cloud, Oracle Cloud - read-only), start, watch live progress, read the dashboard. For the network: the whole local range or a list of IPs, ranges, MAC addresses and hostnames (typed or uploaded as `ip.txt` / `mac.txt` / `hostnames.txt`), plus a checklist of what to run. Hosts are labelled by device type (Raspberry Pi first) with the evidence. Optional credential cards (SSH, SNMP, Proxmox VE, AWS, Azure, GCP, Kubernetes) for logins, used for that scan only or remembered in the encrypted vault. With a Proxmox token or an SSH login to a Proxmox/libvirt host, VMs are listed with vCPU, RAM, disks (NVMe/SSD/HDD) and matched to what runs inside them (`docs/VM_INVENTORY.md`) |

@@ -113,7 +113,21 @@ class LocalSession(Session):
         pid, fd = pty.fork()
         if pid == 0:                                        # child: becomes the shell
             try:
-                os.chdir(str(Path.home()))
+                home = str(Path.home())
+                uid = os.environ.get("SUDO_UID", "")
+                if os.geteuid() == 0 and uid.isdigit() and uid != "0":
+                    # panel started with sudo: the terminal is still the user's own shell
+                    # (type sudo in it for root, like in any terminal)
+                    import pwd
+                    pw = pwd.getpwuid(int(uid))
+                    os.initgroups(pw.pw_name, pw.pw_gid)
+                    os.setgid(pw.pw_gid)
+                    os.setuid(pw.pw_uid)
+                    home = pw.pw_dir
+                    env.update(HOME=home, USER=pw.pw_name, LOGNAME=pw.pw_name, SHELL=pw.pw_shell or "/bin/bash")
+                    for k in ("SUDO_UID", "SUDO_GID", "SUDO_USER", "SUDO_COMMAND"):
+                        env.pop(k, None)
+                os.chdir(home)
                 os.execvpe("bash", ["bash", "-l"], env)
             finally:
                 os._exit(127)

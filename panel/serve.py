@@ -13,6 +13,7 @@ Design goals: zero third-party dependencies (uses http.server), fully local
 """
 from __future__ import annotations
 
+import errno
 import json
 import os
 import secrets
@@ -24,6 +25,7 @@ import time
 import uuid
 import webbrowser
 import subprocess
+import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
@@ -239,20 +241,68 @@ def _tool_name(argv: str) -> str:
     return ""
 
 
+def _give_back() -> None:
+    """Panel started with sudo: hand root-owned files it or its scans wrote (reports,
+    targets files, host keys, vault) back to the user who ran sudo."""
+    uid, gid = os.environ.get("SUDO_UID", ""), os.environ.get("SUDO_GID", "")
+    if os.geteuid() != 0 or not uid.isdigit() or uid == "0":
+        return
+    for base in (APP_DIR, ND_DIR / "reports", ND_DIR / "config"):
+        for root, dirs, files in os.walk(base):
+            for name in dirs + files + [""]:
+                p = os.path.join(root, name) if name else root
+                try:
+                    if os.lstat(p).st_uid == 0:
+                        os.lchown(p, int(uid), int(gid or uid))
+                except OSError:
+                    pass
+
+
+def _descendants(pid: int) -> list[int]:
+    """All processes below pid (from /proc). `timeout` puts its command in a process
+    group of its own, so killing discover.sh's group alone left nmap running."""
+    kids: dict[int, list[int]] = {}
+    for d in os.listdir("/proc"):
+        if not d.isdigit():
+            continue
+        try:
+            stat = open(f"/proc/{d}/stat").read()
+            ppid = int(stat.rsplit(")", 1)[1].split()[1])
+        except (OSError, ValueError, IndexError):
+            continue
+        kids.setdefault(ppid, []).append(int(d))
+    out, todo = [], [pid]
+    while todo:
+        for c in kids.get(todo.pop(), []):
+            out.append(c); todo.append(c)
+    return out
+
+
+def _signal_all(pids, sig) -> None:
+    for p in pids:
+        try:
+            os.kill(p, sig)
+        except (ProcessLookupError, PermissionError):
+            pass
+
+
 def _kill_group(proc) -> None:
     """Stop discover.sh and everything it started (nmap, arp-scan, …)."""
+    below = _descendants(proc.pid)          # read first: once the script dies they move to init
     try:
         os.killpg(proc.pid, signal.SIGTERM)
     except ProcessLookupError:
-        return
+        pass
+    _signal_all(below, signal.SIGTERM)
     for _ in range(30):
-        if proc.poll() is not None:
+        if proc.poll() is not None and not any(os.path.exists(f"/proc/{p}") for p in below):
             return
         time.sleep(0.1)
     try:
         os.killpg(proc.pid, signal.SIGKILL)
     except ProcessLookupError:
         pass
+    _signal_all(below, signal.SIGKILL)
 
 
 def run_shell_scan(sid: str, opts: dict) -> None:
@@ -370,14 +420,17 @@ def run_shell_scan(sid: str, opts: dict) -> None:
             if "run directory:" in line:
                 run_dir = Path(line.split("run directory:", 1)[1].strip())
             if "sudo not authorised" in line and scope == "network":
-                s["note"] = ("Running without admin rights, so the ARP sweep and OS "
-                             "detection are skipped. Everything else runs.")
+                s["note"] = ("Running without admin rights on this machine, so the ARP sweep and OS "
+                             "detection are skipped. Everything else runs. For admin rights, stop the "
+                             "panel and start it with: sudo ./start.sh  (SSH logins to other machines "
+                             "don't need this - they run after the port scan.)")
             if "no cloud CLI installed" in line or "no cloud account reachable" in line:
                 nothing_cloud = True
             if line.startswith("[FAIL]"):
                 last_fail = line[6:].strip()
             _log(sid, line)
     proc.wait()
+    _give_back()
     (REPORTS / f"{sid}-targets.txt").unlink(missing_ok=True)
 
     with LOCK:
@@ -872,10 +925,28 @@ def _wrap(v):
 
 
 
+def _port_owner() -> str:
+    """Who holds our port (pid/program from `ss`; other users' only when we are root)."""
+    try:
+        out = subprocess.run(["ss", "-ltnpH", f"sport = :{PORT}"], capture_output=True, text=True).stdout
+    except OSError:
+        return ""
+    m = re.search(r'users:\(\("([^"]+)",pid=(\d+)', out)
+    return f" (pid {m.group(2)}, {m.group(1)})" if m else ""
+
+
 def main():
-    srv = ThreadingHTTPServer((HOST, PORT), Handler)
+    try:
+        srv = ThreadingHTTPServer((HOST, PORT), Handler)
+    except OSError as e:
+        if e.errno != errno.EADDRINUSE:
+            raise
+        print(f"Port {PORT} is already in use{_port_owner()} - most likely the panel is already running.\n"
+              "Stop it first (Ctrl-C in its terminal, or kill that pid), then start this again.")
+        sys.exit(1)
     url = f"http://{HOST}:{PORT}"
-    print(f"SentinelScan control panel → {url}")
+    root = os.geteuid() == 0
+    print(f"SentinelScan control panel → {url}" + ("   (running as root: scans get full rights)" if root else ""))
     print(f"  host engine: {len(MODULE_REGISTRY)} modules")
     print(f"  network/cloud tool: {ND_DIR}  ({'found' if (ND_DIR/'discover.sh').exists() else 'not found'})")
     if db.database_url():
@@ -891,16 +962,20 @@ def main():
     else:
         print("  database: not configured (run install.sh); scans are not saved")
     print("  Ctrl-C to stop.")
-    try:
-        webbrowser.open(url)
-    except Exception:
-        pass
+    if root:
+        print(f"  open {url} in your browser (not opened automatically as root)")
+    else:
+        try:
+            webbrowser.open(url)
+        except Exception:
+            pass
     try:
         srv.serve_forever()
     except KeyboardInterrupt:
         print("\nstopped.")
     finally:
         term.close_all()                       # don't leave shells behind
+        _give_back()
 
 
 if __name__ == "__main__":

@@ -136,7 +136,7 @@ auth_snmp_cards() {
     # one quick get first, so dead hosts cost 2 s, not two 30 s walks
     local sport; sport="$(cred_get "$id" port)"
     local agent="udp:$ip:${sport:-161}"
-    out=$(SNMPCONFPATH="$SECURE_TMP" timeout 8 snmpget -m "" -t 2 -r 0 -Oqv "$agent" 1.3.6.1.2.1.1.5.0 2>&1); rc=$?
+    out=$(SNMPCONFPATH="$SECURE_TMP" timeout --foreground 8 snmpget -m "" -t 2 -r 0 -Oqv "$agent" 1.3.6.1.2.1.1.5.0 2>&1); rc=$?
     if (( rc != 0 )); then
       case "$out" in
         *uthenticat*|*"Unknown user"*|*"Decryption error"*|*"wrong digest"*) cred_result snmp "$name" "$ip" auth_failed ;;
@@ -147,9 +147,9 @@ auth_snmp_cards() {
     step "SNMP walk $ip ($name)"
     {
       printf '### SNMP %s (credential: %s)\n\n' "$ip" "$name"
-      SNMPCONFPATH="$SECURE_TMP" timeout 30 snmpwalk -m "" -Oqv "$agent" 1.3.6.1.2.1.1 2>&1 | sed 's/^/system: /'
+      SNMPCONFPATH="$SECURE_TMP" timeout --foreground 30 snmpwalk -m "" -Oqv "$agent" 1.3.6.1.2.1.1 2>&1 | sed 's/^/system: /'
       printf '\n--- interfaces ---\n'
-      SNMPCONFPATH="$SECURE_TMP" timeout 45 snmpwalk -m "" -Oqv "$agent" 1.3.6.1.2.1.2.2.1.2 2>&1
+      SNMPCONFPATH="$SECURE_TMP" timeout --foreground 45 snmpwalk -m "" -Oqv "$agent" 1.3.6.1.2.1.2.2.1.2 2>&1
     } | scrub >"$RAW/snmp/$safe.txt"
     cred_result snmp "$name" "$ip" ok
     n_ok=$((n_ok+1))
@@ -180,11 +180,15 @@ auth_ssh_cards() {
     if [[ -n "$key" || -n "$keyf" ]]; then
       if [[ -n "$key" ]]; then keyf="$SECURE_TMP/key.$id"; [[ -f "$keyf" ]] || cred_file "$id" key "$keyf"; fi
       o+=(-o BatchMode=yes -o IdentitiesOnly=yes -o PasswordAuthentication=no -i "${keyf/#\~/$HOME}")
-      out=$(timeout 120 ssh "${o[@]}" "$user@$ip" "$SSH_REMOTE_CMD" 2>&1); rc=$?
+      out=$(timeout --foreground 120 ssh "${o[@]}" "$user@$ip" "$SSH_REMOTE_CMD" 2>&1); rc=$?
     elif have sshpass; then
       o+=(-o PubkeyAuthentication=no -o PreferredAuthentications=password,keyboard-interactive)
       # sshpass -e reads $SSHPASS: the password is never in argv
-      out=$(SSHPASS="$pass" timeout 120 sshpass -e ssh "${o[@]}" "$user@$ip" "$SSH_REMOTE_CMD" 2>&1); rc=$?
+      out=$(SSHPASS="$pass" timeout --foreground 120 sshpass -e ssh "${o[@]}" "$user@$ip" "$SSH_REMOTE_CMD" 2>&1); rc=$?
+    elif python3 -c "import paramiko" 2>/dev/null; then
+      # no sshpass: same login through lib/ssh_pass.py (password from $SSHPASS, not argv)
+      out=$(SSHPASS="$pass" timeout --foreground 120 python3 "$BASE_DIR/lib/ssh_pass.py" \
+              -p "${port:-22}" -k "$kh" "$user@$ip" "$SSH_REMOTE_CMD" 2>&1); rc=$?
     else
       warn "sshpass is not installed - password logins skipped (sudo apt install sshpass)"
       cred_result ssh "$name" "$ip" error "sshpass missing"; continue
@@ -254,10 +258,10 @@ auth_snmp() {
     step "SNMP walk $ip"
     {
       printf '### SNMP %s\n\n' "$ip"
-      SNMPCONFPATH="$SECURE_TMP" timeout 30 snmpwalk -Oqv "$ip" \
+      SNMPCONFPATH="$SECURE_TMP" timeout --foreground 30 snmpwalk -Oqv "$ip" \
         1.3.6.1.2.1.1 2>&1 | sed 's/^/system: /'
       printf '\n--- interfaces ---\n'
-      SNMPCONFPATH="$SECURE_TMP" timeout 45 snmpwalk -Oqv "$ip" \
+      SNMPCONFPATH="$SECURE_TMP" timeout --foreground 45 snmpwalk -Oqv "$ip" \
         1.3.6.1.2.1.2.2.1.2 2>&1
     } | scrub >"$RAW/snmp/$safe.txt"
   done
@@ -308,10 +312,10 @@ auth_ssh() {
     step "ssh $user@$ip"
     if (( use_pass )); then
       # sshpass -e reads the password from $SSHPASS - not visible in argv
-      SSHPASS="$pass" timeout 120 sshpass -e ssh "${sshopts[@]}" "$user@$ip" "$remote_cmd" \
+      SSHPASS="$pass" timeout --foreground 120 sshpass -e ssh "${sshopts[@]}" "$user@$ip" "$remote_cmd" \
         2>&1 | scrub >"$RAW/ssh/$safe.txt" || warn "  $ip: connection or auth failed"
     else
-      timeout 120 ssh "${sshopts[@]}" "$user@$ip" "$remote_cmd" \
+      timeout --foreground 120 ssh "${sshopts[@]}" "$user@$ip" "$remote_cmd" \
         2>&1 | scrub >"$RAW/ssh/$safe.txt" || warn "  $ip: connection or auth failed"
     fi
   done

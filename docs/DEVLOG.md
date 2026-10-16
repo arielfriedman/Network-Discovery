@@ -32,6 +32,40 @@ Entry template:
 
 ---
 
+## 2026-10-16 - Fix: sudo ./start.sh, Stop leaving nmap running, SSH password logins without sshpass
+**Change:** (1) `serve.py` start: if port 8765 is taken it says so (with the pid from `ss`) and
+exits, instead of a Python traceback. Run as root: prints "running as root", doesn't open a browser
+as root, hands root-owned files under panel/, discovery/reports and discovery/config back to
+SUDO_UID after each scan and on exit (`_give_back`). The Actions terminal drops to the sudo user's
+own shell (`terminal.py`). `discover.sh` run with sudo does the same for its run folder,
+`reports/latest` and config (`give_back_files` in cleanup). (2) Stop: `_kill_group` also signals
+every process below the scan (read from /proc), and all `timeout` calls in the scan scripts use
+`--foreground`. (3) `discovery/lib/ssh_pass.py` (paramiko): password SSH logins for credential
+cards when sshpass is missing. (4) The "no admin rights" note on the Scan page says how to get them
+(`sudo ./start.sh`) and that SSH logins don't need it.
+**Why:** the user ran `sudo ./start.sh` but scans still said "sudo not authorised". A scan
+with a root SSH card for the Proxmox host also showed no root/login use.
+**Issues / errors:** sudo start had no effect -> the old panel (user fritz, 20 h old) still held
+port 8765, so the new one crashed with `OSError: [Errno 98] Address already in use` and the browser
+kept talking to the old, non-root one -> clear message. Stopped scans left nmap running
+(an orphan found 5 min after Stop, and again after the panel exited) -> GNU `timeout` puts its
+command in its own process group, so killing discover.sh's group missed it -> `--foreground`
+and a /proc tree kill. The SSH card wasn't used -> (a) that scan was still in stage 3 (all 65535
+ports + vuln scripts, up to 10 min); logins run in stage 5, after the port scan; (b) sshpass is
+not installed and the panel runs with `--no-install`, so password logins would have been skipped
+("sshpass missing") -> paramiko fallback. Side effect of my testing: a 5 s test start of the
+panel while the user's panel was down opened a browser tab and ran `mark_interrupted` (the scan
+whose panel had already stopped was marked interrupted).
+**Verified:** plain vs `--foreground` timeout under a group kill (plain: child survived;
+foreground: stopped). `_kill_group` on a script with both kinds: all 4 children gone. Port-in-use
+message on a spare busy port: text with pid, exit 1. ssh_pass.py against a paramiko test server:
+login + output + stderr + remote exit code 3 (5 of 5), host key stored once, wrong password -> 5
+"Permission denied", changed host key -> 255 "Host key verification failed" (password not sent),
+refused port -> 255, client stderr empty. t_term 17/17, t_poll 6/6, stage 3 hang test OK.
+**Not verified / follow-up:** anything as real root (`_give_back`, terminal dropping to the user,
+discover.sh `give_back_files`) - needs the user's sudo. A real password login to the Proxmox host
+through ssh_pass.py.
+
 ## 2026-10-15 - More detail from a scan without logins (hostname, Proxmox, extra ports)
 **Change:** (1) Host name from the TLS certificate (SAN DNS names, then CN) when DNS, mDNS and
 NetBIOS give none (`host_profile.name_from_cert`, `hostname_source: "TLS certificate"`).

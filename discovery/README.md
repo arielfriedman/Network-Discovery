@@ -157,7 +157,9 @@ How it protects things:
   replaced with `***REDACTED***` before anything is written to a report.
 - SNMP communities go to `snmpwalk` through a temporary `snmp.conf`, and SSH
   passwords through `sshpass -e` (an environment variable), so neither appears
-  in the process list.
+  in the process list. Without sshpass, `lib/ssh_pass.py` (paramiko) does the
+  same login the same way: password from `$SSHPASS`, new host keys added to
+  `config/known_hosts`, a changed key refused before the password is sent.
 
 If a credential is not in the vault, the scanner asks for it at the moment it is
 needed and offers to save it afterwards. You never have to use the vault at all.
