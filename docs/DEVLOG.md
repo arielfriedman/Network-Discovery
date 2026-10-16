@@ -32,6 +32,31 @@ Entry template:
 
 ---
 
+## 2026-10-16 - Installer: dashboard as a service, checked address at the end
+**Change:** `install.sh` step 5 writes `/etc/systemd/system/sentinelscan.service`, enables and
+(re)starts it, waits up to 15 s for http://127.0.0.1:8765 to answer, and ends with "SentinelScan
+is running. Open: http://127.0.0.1:8765" (or the journal's last lines if it doesn't answer).
+Runs as the installing user by default; `--root` runs it as root with SUDO_UID/SUDO_GID/SUDO_USER
+set, so the panel hands files back and the Actions terminal stays the user's shell (2026-10-16
+entry below). `--no-service` keeps the old "start it yourself" ending; no systemd (WSL, containers)
+falls back to that too. `curl` added to the packages. `serve.py`: `SENTINEL_NO_BROWSER=1` (set by
+the unit) doesn't open a browser; the port-in-use message mentions the service when it exists.
+**Why:** the user wants: get it with curl, dependencies installed automatically, and at the end a
+local address that works.
+**Issues / errors:** the repository is private: the raw install.sh URL answers 302 to
+`/users/sign_in`, so `curl | bash` can't work for others until the repo is public (which waits on
+the planned history rewrite). My first edit attempt nested heredocs in one shell command: the
+outer heredoc ended at an inner `EOF`, and the rest ran as shell commands -> `systemctl
+daemon-reload/enable/restart sentinelscan` as the user, which failed (polkit "Connection timed
+out"); no unit was written and no file changed (checked). Redone from a patch script.
+**Verified:** generated units (folder name with spaces; user mode and --root) pass
+`systemd-analyze verify`. The panel started by systemd (`systemd-run --user`, spare port 8791,
+SENTINEL_NO_BROWSER=1) answered after ~1 s, no browser opened. curl path: `cat install.sh |
+bash -s -- --dry-run` with SENTINEL_REPO = a local copy -> clone step; the cloned installer's
+dry run goes through packages, PostgreSQL, vendor list, service, done.
+**Not verified / follow-up:** a real install with sudo/apt and the real system service (needs the
+user's password), a fresh machine, the public curl URL (repo private).
+
 ## 2026-10-16 - Fix: sudo ./start.sh, Stop leaving nmap running, SSH password logins without sshpass
 **Change:** (1) `serve.py` start: if port 8765 is taken it says so (with the pid from `ss`) and
 exits, instead of a Python traceback. Run as root: prints "running as root", doesn't open a browser

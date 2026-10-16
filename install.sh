@@ -12,11 +12,16 @@
 #   4. saves the connection string to panel/settings.local.json (mode 600)
 #   5. creates the tables and imports any earlier scan reports
 #   6. schedules a nightly database backup (03:17, your crontab, last 14 kept)
+#   7. runs the dashboard as a service (starts now and after every reboot) and
+#      checks that http://127.0.0.1:8765 answers
 #
 # Options:
 #   --no-db       skip PostgreSQL (the panel works, without history)
 #   --no-backup   don't schedule the nightly database backup
 #   --no-tools    skip the network scanning tools (nmap, arp-scan, ...)
+#   --no-service  don't install the service; start it yourself with ./start.sh
+#   --root        run the service as root: scans get ARP sweep + OS detection
+#                 (the Actions terminal stays your own user's shell)
 #   --dry-run     print what would be done, change nothing
 #
 # Environment: SENTINEL_DIR   where curl installs put the project (default ~/sentinelscan)
@@ -26,14 +31,16 @@ set -euo pipefail
 REPO_URL="${SENTINEL_REPO:-https://gitlab.com/fritzizi/network-discovery.git}"
 DB_NAME=sentinel
 DB_USER=sentinel
-DO_DB=1 DO_TOOLS=1 DO_BACKUP=1 DRY=0
+DO_DB=1 DO_TOOLS=1 DO_BACKUP=1 DO_SERVICE=1 AS_ROOT=0 DRY=0
 for a in "$@"; do
   case "$a" in
     --no-db) DO_DB=0 ;;
     --no-tools) DO_TOOLS=0 ;;
     --no-backup) DO_BACKUP=0 ;;
+    --no-service) DO_SERVICE=0 ;;
+    --root) AS_ROOT=1 ;;
     --dry-run) DRY=1 ;;
-    -h|--help) sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "unknown option: $a (try --help)" >&2; exit 2 ;;
   esac
 done
@@ -82,7 +89,7 @@ if [[ -n "$SUDO" ]]; then
 fi
 
 # ── 2. packages ────────────────────────────────────────────────────────────
-pkgs=(python3 git gnupg ca-certificates python3-paramiko)
+pkgs=(python3 git gnupg ca-certificates curl python3-paramiko)
 (( DO_DB )) && pkgs+=(postgresql python3-psycopg2)
 if (( DO_TOOLS )); then
   # the same list the network scanner checks for (discovery/lib/preflight.sh)
@@ -179,19 +186,85 @@ else
   warn "could not download it (offline?); the copies from arp-scan/nmap are used instead"
 fi
 
-# ── 5. done ────────────────────────────────────────────────────────────────
+# ── 5. the dashboard as a service ─────────────────────────────────────────
 chmod +x "$APP/start.sh" "$APP/discovery/discover.sh" "$APP/discovery/vault.sh" 2>/dev/null || true
+URL="http://127.0.0.1:8765"
+UNIT=/etc/systemd/system/sentinelscan.service
+answers() { curl -fsS -o /dev/null --max-time 2 "$URL/" 2>/dev/null; }
+
+# The unit file text
+unit_text() {
+  local runas
+  if (( AS_ROOT )); then
+    # SUDO_* tell the panel whose files these are (it hands root-owned files
+    # back) and whose shell the Actions terminal opens
+    runas="Environment=SUDO_UID=$(id -u "$OWNER") SUDO_GID=$(id -g "$OWNER") SUDO_USER=$OWNER"
+  else
+    runas="User=$OWNER"$'\n'"Group=$(id -g "$OWNER")"
+  fi
+  cat <<UNIT
+[Unit]
+Description=SentinelScan dashboard ($URL)
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+$runas
+Environment=SENTINEL_NO_BROWSER=1 PYTHONUNBUFFERED=1
+ExecStart=/usr/bin/env python3 "$APP/panel/serve.py"
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+}
+
+SERVICE=0
+if (( DO_SERVICE )); then
+  say "Dashboard service"
+  if ! command -v systemctl >/dev/null || [[ ! -d /run/systemd/system ]]; then
+    warn "no systemd here (container / WSL?) - start the dashboard yourself with ./start.sh"
+  elif (( DRY )); then
+    echo "  [dry-run] would write $UNIT (runs as $( (( AS_ROOT )) && echo root || echo "$OWNER")), enable and start it"
+  else
+    if answers && ! $SUDO systemctl is-active --quiet sentinelscan; then
+      warn "a panel started by hand already answers on $URL - stop it (Ctrl-C) and run: sudo systemctl restart sentinelscan"
+    fi
+    unit_text | $SUDO tee "$UNIT" >/dev/null
+    $SUDO systemctl daemon-reload
+    $SUDO systemctl enable sentinelscan >/dev/null 2>&1
+    $SUDO systemctl restart sentinelscan
+    for _ in $(seq 1 30); do answers && break; sleep 0.5; done
+    if answers; then
+      SERVICE=1
+      ok "running as $( (( AS_ROOT )) && echo root || echo "$OWNER"), starts at boot"
+    else
+      warn "the service did not answer on $URL. Last log lines:"
+      $SUDO journalctl -u sentinelscan -n 15 --no-pager 2>/dev/null | sed 's/^/    /' || true
+    fi
+  fi
+fi
+
+# ── 6. done ────────────────────────────────────────────────────────────────
 say "Done"
 Q="$(printf '%q' "$APP")"   # quoted, in case the folder name has spaces
-cat <<EOF
+if (( SERVICE )); then
+  printf '\n  %sSentinelScan is running.%s  Open:  %s%s%s\n\n' "$G" "$N" "$B" "$URL" "$N"
+  echo "  Service:      sudo systemctl status|restart|stop sentinelscan   (logs: journalctl -u sentinelscan)"
+  (( AS_ROOT )) || echo "  Full rights:  re-run the installer with --root (ARP sweep, OS detection)"
+else
+  cat <<EOF
 
   Start the dashboard:   $Q/start.sh
-  Then open:             http://127.0.0.1:8765
-
+  Then open:             $URL
   For the checks that need root (ARP sweep, OS detection, full host audit):
                          sudo $Q/start.sh
-
-  Update later:          git -C $Q pull && $Q/install.sh
+EOF
+fi
+cat <<EOF
+  Update later:  git -C $Q pull && $Q/install.sh
 
   Scan and configure only networks and devices you own or are authorised to manage.
 EOF

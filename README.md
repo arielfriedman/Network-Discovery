@@ -29,9 +29,20 @@ The installer asks for your sudo password once, then:
    reachable only from this machine
 3. saves the connection string to `panel/settings.local.json` (readable only by you, never committed)
 4. creates the tables and imports any earlier scan reports
+5. starts the dashboard as a service (`sentinelscan`, also after a reboot), checks that it
+   answers, and prints the address to open: **http://127.0.0.1:8765**
 
 It is safe to run again; that is also how you update: `git pull && ./install.sh`.
-Options: `--no-db` (no PostgreSQL, no history), `--no-tools` (skip nmap and friends), `--dry-run`.
+Options: `--root` (the service runs as root, so scans get the ARP sweep and OS detection),
+`--no-service` (start it yourself with `./start.sh`), `--no-db` (no PostgreSQL, no history),
+`--no-tools` (skip nmap and friends), `--no-backup`, `--dry-run`. With curl:
+`curl -fsSL .../install.sh | bash -s -- --root`.
+
+Manage the service with `sudo systemctl status|restart|stop sentinelscan`
+(logs: `journalctl -u sentinelscan`).
+
+> The curl line works once the repository is public. While it is private, GitLab answers
+> with its sign-in page; clone with your GitLab login and run `./install.sh` instead.
 
 ## Run
 

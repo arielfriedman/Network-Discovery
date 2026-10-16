@@ -942,7 +942,9 @@ def main():
         if e.errno != errno.EADDRINUSE:
             raise
         print(f"Port {PORT} is already in use{_port_owner()} - most likely the panel is already running.\n"
-              "Stop it first (Ctrl-C in its terminal, or kill that pid), then start this again.")
+              "Stop it first (Ctrl-C in its terminal, or kill that pid), then start this again."
+              + ("\nIt runs as a service: sudo systemctl stop sentinelscan  (or just open "
+                 f"http://{HOST}:{PORT})" if os.path.exists("/etc/systemd/system/sentinelscan.service") else ""))
         sys.exit(1)
     url = f"http://{HOST}:{PORT}"
     root = os.geteuid() == 0
@@ -962,7 +964,9 @@ def main():
     else:
         print("  database: not configured (run install.sh); scans are not saved")
     print("  Ctrl-C to stop.")
-    if root:
+    if os.environ.get("SENTINEL_NO_BROWSER"):
+        pass                                   # running as a service
+    elif root:
         print(f"  open {url} in your browser (not opened automatically as root)")
     else:
         try:
