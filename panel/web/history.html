@@ -57,6 +57,7 @@
   <div id="detail" style="display:none">
     <div class="row" style="margin-top:22px"><button class="btn ghost" id="backBtn">← All scans</button>
       <a class="btn ghost" id="jsonLink" href="#" download>Download JSON</a>
+      <button class="btn ghost" id="diagramBtn" style="display:none">Network drawing</button>
       <button class="btn ghost danger-text" id="delOne">Delete this scan</button></div>
     <h2 id="dTitle"></h2>
     <div class="kpis" id="kpis"></div>
@@ -162,6 +163,8 @@ document.addEventListener("DOMContentLoaded", () => {
     $("dTitle").textContent = `${KIND[s.kind] || s.kind} scan · ${fmtTime(s.started_at)}`;
     const blob = new Blob([JSON.stringify(d, null, 2)], { type: "application/json" });
     $("jsonLink").href = URL.createObjectURL(blob); $("jsonLink").download = `scan_${ref}.json`;
+    $("diagramBtn").style.display = s.kind === "network" && s.report_path ? "" : "none";
+    $("diagramBtn").onclick = () => openDiagram(ref);
     const k = [];
     if (s.risk_score != null) k.push([s.risk_score + "/100", "Risk score"]);
     k.push([d.findings.length, "Findings"]);

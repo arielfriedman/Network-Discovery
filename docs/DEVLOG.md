@@ -32,6 +32,38 @@ Entry template:
 
 ---
 
+## 2026-10-16 - Network drawings of a scan (draw.io)
+**Change:** new `panel/diagrams.py`: from a network scan's findings.json, one layout written as
+a `.drawio` file (page "Network": internet, gateway, LAN line, hosts grouped by device type,
+hypervisors holding their VMs; page "Virtual machines" with vCPU/RAM/disks when listed) and as SVG
+(preview). PNG/PDF through the draw.io desktop CLI when installed (xvfb-run without a display,
+`--no-sandbox` as root, PNG end-chunk repair); without it the PNG is drawn from the SVG in the
+browser. "Open in diagrams.net" link with the drawing in the #fragment (deflate + base64 of the
+encodeURIComponent'd XML). `serve.py`: `/api/diagram/<scan>/drawio|svg|png|pdf|link` and
+`/api/diagram/tools`; the scan's findings.json comes from the live scan or the saved scan's
+`report_path`, only inside discovery/reports; downloads logged as `scan.diagram`. UI: "Network
+drawing" button on the Scan page when a network scan finishes and on saved network scans in
+History, opening a dialog (`openDiagram` in common.js). Doc: `docs/DIAGRAMS.md`.
+**Why:** the user wants drawings of a finished scan, "with drawio-skill if possible else something
+similar". The drawio-skill is instructions for an AI assistant (write draw.io XML, export with the
+draw.io CLI); it can't run inside the dashboard for its users, so the panel produces the same
+open format itself and uses the same CLI when present.
+**Issues / errors:** the gateway showed "_gateway" (systemd-resolved's alias for the default
+gateway, not a real name) -> ignored as a name. Host names, vendors and apps come from the network
+-> labels are plain text (html=0) and XML-escaped in both outputs.
+**Verified:** rendered your 16-host scan of 2026-10-15 plus 3 sample VMs on 172.16.0.30 to SVG and
+looked at a screenshot (groups, LAN line, gateway, hypervisor with a running VM, a container and a
+stopped (dashed) VM). drawio output: XML parses, ids unique, every parent/source/target exists, edges
+have geometry, 2 pages. Hostile host name `<script>...<svg onload=...>` stays text: no script
+element or on* attribute in either output. Test panel (port 8792, scratch DB, saved test scan): drawio
+200 (byte-identical to the generator), svg 200, link 200, png/pdf 409 "draw.io desktop app is not
+installed", path-like and unknown ids 404. Headless Brave click-through of History: button shown,
+dialog opens, preview loads (1604x982), diagrams.net link built, PNG download offered, dialog
+closes. The link decodes back to the identical XML. Test scan, report folder and test page removed.
+**Not verified / follow-up:** opening the .drawio in the real draw.io app or diagrams.net (no draw.io
+desktop here, and I did not send scan data to the diagrams.net site), the CLI PNG/PDF path, a live
+scan's button on the Scan page (same function as History), very large networks (100+ hosts).
+
 ## 2026-10-16 - Installer: dashboard as a service, checked address at the end
 **Change:** `install.sh` step 5 writes `/etc/systemd/system/sentinelscan.service`, enables and
 (re)starts it, waits up to 15 s for http://127.0.0.1:8765 to answer, and ends with "SentinelScan

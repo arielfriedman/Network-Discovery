@@ -50,6 +50,7 @@
     <div class="done-bar" id="doneBar">
       <a id="viewBtn" href="#">Open dashboard</a>
       <a id="jsonBtn" class="ghost" href="#">Download JSON</a>
+      <button class="ghost" id="diagramBtn" style="display:none">Network drawing</button>
       <button class="ghost" id="againBtn">New scan</button>
     </div>
     <iframe id="frame" style="display:none"></iframe>
@@ -227,7 +228,7 @@ document.addEventListener("DOMContentLoaded",function(){
     Creds.wipe();
     $("setup").style.display="none"; $("run").style.display="block";
     $("runTitle").textContent="Scanning";
-    $("doneBar").style.display="none"; $("frame").style.display="none";
+    $("doneBar").style.display="none"; $("frame").style.display="none"; $("diagramBtn").style.display="none";
     $("noteBox").style.display="none"; $("nowCmd").style.display="flex";
     $("stopRow").style.display="flex"; $("stopBtn").disabled=false; $("stopBtn").textContent="Stop scan";
     $("barFill").style.width="0%"; $("logBox").textContent="";
@@ -261,6 +262,8 @@ document.addEventListener("DOMContentLoaded",function(){
     $("doneBar").style.display="flex";
     $("viewBtn").style.display=s.has_result?"inline-block":"none";
     $("jsonBtn").style.display=s.has_json?"inline-block":"none";
+    $("diagramBtn").style.display=s.has_diagram?"inline-block":"none";
+    const did=curId; $("diagramBtn").onclick=()=>openDiagram(did);
     if(s.has_result){
       $("viewBtn").href=`/results/${curId}`; $("viewBtn").target="_blank";
       $("jsonBtn").href=`/api/scan/${curId}/json`;

@@ -37,6 +37,7 @@ from scanner import ScanSession, ScanOrchestrator, MODULE_REGISTRY
 from reporters import generate_dashboard
 import db
 import db_backup
+import diagrams
 import actions as act
 import action_targets as atg
 import terminal as term
@@ -455,9 +456,33 @@ def run_shell_scan(sid: str, opts: dict) -> None:
     _store_shell_result(sid, scope, final, run_dir)
 
 
+def _findings_for(ref: str) -> dict | None:
+    """findings.json of a network scan, by panel scan id or saved scan_ref."""
+    if not diagrams.SAFE_REF.match(ref):
+        return None
+    with LOCK:
+        path = (SCANS.get(ref) or {}).get("findings_path")
+    if not path:
+        got = db.get_scan(ref) if db.ready() else None
+        rp = ((got or {}).get("scan") or {}).get("report_path")
+        if not rp or (got["scan"].get("kind") or "network") != "network":
+            return None
+        path = str(Path(rp).parent / "findings.json")
+    p = Path(path).resolve()
+    if not p.is_file() or (ND_DIR / "reports").resolve() not in p.parents:
+        return None
+    try:
+        return json.loads(p.read_text())
+    except (OSError, ValueError):
+        return None
+
+
 def _store_shell_result(sid: str, scope: str, status: str, run_dir) -> None:
     """Save a discovery run's findings.json to the database, or just mark how it ended."""
     fj = run_dir / "findings.json" if run_dir else None
+    if scope == "network" and fj and fj.exists():
+        with LOCK:
+            SCANS[sid]["findings_path"] = str(fj)           # for the drawings
     if status == "complete" and fj and fj.exists():
         try:
             data = json.loads(fj.read_text())
@@ -721,6 +746,7 @@ class Handler(BaseHTTPRequestHandler):
                     "done": s["done"], "total": s["total"], "counts": s["counts"],
                     "log": s["log"][-80:], "has_result": bool(s["result_html"]),
                     "has_json": bool(s["result_json"]),
+                    "has_diagram": bool(s.get("findings_path")),
                 })
         if path.startswith("/results/"):
             sid = path.split("/")[2]
@@ -729,6 +755,30 @@ class Handler(BaseHTTPRequestHandler):
             if not s or not s["result_html"]:
                 return self._send(404, "<h1>No result yet</h1>", "text/html")
             return self._send(200, s["result_html"], "text/html; charset=utf-8")
+        if path == "/api/diagram/tools":
+            return self._send(200, {"drawio_cli": bool(diagrams.cli())})
+        m = re.match(r"^/api/diagram/([A-Za-z0-9_-]{1,64})/(drawio|svg|png|pdf|link)$", path)
+        if m:
+            ref, fmt = m.groups()
+            d = _findings_for(ref)
+            if d is None:
+                return self._send(404, {"error": "no network scan with that id (or its report folder was deleted)"})
+            if fmt == "link":
+                return self._send(200, {"url": diagrams.diagrams_net_url(diagrams.drawio(d))})
+            if fmt == "svg":
+                return self._send(200, diagrams.svg(d).encode(), "image/svg+xml")
+            try:
+                data = diagrams.drawio(d).encode() if fmt == "drawio" else diagrams.export(d, fmt)
+            except (RuntimeError, ValueError, subprocess.TimeoutExpired) as e:
+                return self._send(409, {"error": str(e)})
+            ctype = {"drawio": "application/xml", "png": "image/png", "pdf": "application/pdf"}[fmt]
+            db.log("scan.diagram", ref, {"format": fmt})
+            self.send_response(200)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Disposition", f'attachment; filename="sentinelscan-{ref}.{fmt}"')
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers(); self.wfile.write(data)
+            return
         if path.startswith("/api/scan/") and path.endswith("/json"):
             sid = path.split("/")[3]
             with LOCK:
