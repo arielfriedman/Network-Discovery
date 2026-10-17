@@ -5,6 +5,9 @@ A local security dashboard for your own network. From one browser page on
 inventory your cloud accounts, keep the history of every scan in PostgreSQL,
 and configure network devices with guided wizards.
 
+Code: [gitlab.com/fritzizi/network-discovery](https://gitlab.com/fritzizi/network-discovery)
+(main), copy on [github.com/arielfriedman/Network-Discovery](https://github.com/arielfriedman/Network-Discovery).
+
 > **Scan and configure only networks and devices you own or are authorised to manage.**
 
 **New here? Start with the [user guide](docs/USER_GUIDE.md):** install, the pages, your first scan,

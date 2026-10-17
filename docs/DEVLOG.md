@@ -32,6 +32,20 @@ Entry template:
 
 ---
 
+## 2026-10-17 - Copy on GitHub
+**Change:** the repo is also on GitHub: https://github.com/arielfriedman/Network-Discovery (public).
+Remote `github` added, and `origin` has two push URLs (GitLab, then GitHub), so one `git push`
+updates both; fetch still comes from GitLab, which stays the main copy. README links both.
+**Why:** the user wants a GitHub link to send to people.
+**Issues / errors:** none. The user's existing SSH key already logs in to GitHub, so no token was
+needed; the empty repo was created by the user on github.com (no `gh` CLI here).
+**Verified:** first push of all 39 commits; GitHub and GitLab `main` at the same commit; a logged-out
+clone from GitHub shows only the no-reply email. This commit was pushed with one `git push` and
+checked on both.
+**Not verified / follow-up:** another checkout (or worktree created elsewhere) doesn't get the second
+push URL automatically: `git remote set-url --add --push origin git@github.com:arielfriedman/Network-Discovery.git`
+(after adding the GitLab one the same way).
+
 ## 2026-10-16 - History rewritten: commit email -> GitLab no-reply (force-push)
 **Change:** all 38 commits now carry `35605392-fritzizi@users.noreply.gitlab.com` as author and
 committer instead of the personal Gmail address; file contents unchanged (same tree). Force-pushed
