@@ -47,10 +47,12 @@
       <div id="paneTerm" style="display:none">
         <div class="term-head xt-head"><div id="xtTabs" class="xt-tabs"></div>
           <button class="btn ghost" id="xtNew" title="Open another terminal on the machine picked in Run on">+ New terminal</button></div>
+        <div id="sshBar" class="ssh-bar" style="display:none"></div>
         <div id="xtStack" class="xt-stack">
           <div id="xtEmpty" class="xt-empty">No terminal open yet. Click <b>+ New terminal</b> to start a shell on <b id="xtHere">this machine</b>.</div>
         </div>
-        <div class="muted xt-note">A real shell on the machine picked in "Run on". What you type and see here is not saved or logged.
+        <div class="muted xt-note">A real shell on the machine picked in "Run on". Clicking a terminal's tab makes the actions run on its machine.
+          Typed <code>ssh</code> yourself? The bar above offers to run the actions there too. What you type and see here is not saved or logged.
           sudo asks for its password here.</div>
       </div>
       <div id="paneOut">
@@ -135,7 +137,7 @@ document.addEventListener("DOMContentLoaded", () => {
     $("distro").textContent = ` Detected on ${DATA.target}: ${DATA.distro.pretty}` + (DATA.distro.family ? ` (${DATA.distro.family} family).` : ".");
     $("restoreBtn").style.display = DATA.hidden_builtins ? "" : "none";
     $("folderList").innerHTML = DATA.folders.map(f => `<option value="${esc(f.name)}">`).join("");
-    render(); loadRuns(); xtBtn();
+    render(); loadRuns(); xtBtn(); sshBar();
   }
 
   function render() {
@@ -183,6 +185,7 @@ document.addEventListener("DOMContentLoaded", () => {
   $("askFirst").onchange = () => { ASK = $("askFirst").checked; try { localStorage.setItem("sentinel-act-ask", ASK ? "1" : "0"); } catch (e) {} };
   function runAction(id) {
     const a = byId(id);
+    if (!TARGET && inSsh(ACTIVE)) return askWhere(a);
     if (a.dangerous || ASK) return prepare(id);
     doRun(a, false);
   }
@@ -203,6 +206,30 @@ document.addEventListener("DOMContentLoaded", () => {
     if (t) activate(t); else if (!(t = await newTerm(TARGET))) return;
     await send(t, steps.map(c => c + "\r").join(""));
     t.xt.focus();
+  }
+  // the active terminal is on this machine but the user typed ssh in it: actions would
+  // still run on this machine, so ask where they meant
+  const inSsh = t => !!(t && t.alive && !t.target && t.ssh);
+  function askWhere(a) {
+    const t = ACTIVE, to = t.ssh.label, steps = a.steps.map(s => s.here).filter(Boolean);
+    showTab("out");
+    $("termTitle").textContent = a.name;
+    $("confirmBox").style.display = "block";
+    $("confirmBox").innerHTML = `<div><b>Terminal ${t.n} is logged in to ${esc(to)} with ssh, but actions run on
+      ${esc(DATA.target)}.</b> Where should "${esc(a.name)}" run?</div>
+      <ol>${steps.map(s => `<li><code>${esc(s)}</code></li>`).join("")}</ol>
+      <div class="row-btns"><button class="btn" id="wConn">Connect actions to ${esc(to)}</button>
+      <button class="btn ghost" id="wType" title="Types the commands into terminal ${t.n}, so they run in its ssh session; answer prompts there">Type into terminal ${t.n} (runs on ${esc(to)})</button>
+      <button class="btn ghost" id="wLocal">Run on ${esc(DATA.target)}</button>
+      <button class="btn ghost" id="wNo">Cancel</button></div>`;
+    $("wNo").onclick = () => { $("confirmBox").style.display = "none"; };
+    $("wConn").onclick = () => { $("confirmBox").style.display = "none"; connectTo(t.ssh); };
+    $("wType").onclick = async () => {
+      if (a.dangerous && !confirm(`"${a.name}" is marked dangerous. Type its commands into terminal ${t.n} (${to})?`)) return;
+      $("confirmBox").style.display = "none"; showTab("term"); activate(t);
+      await send(t, steps.map(c => c + "\r").join("")); t.xt.focus();
+    };
+    $("wLocal").onclick = () => { $("confirmBox").style.display = "none"; if (a.dangerous || ASK) prepare(a.id); else doRun(a, false); };
   }
   function prepare(id) {
     const a = byId(id), steps = a.steps.map(s => s.here).filter(Boolean);
@@ -268,15 +295,40 @@ document.addEventListener("DOMContentLoaded", () => {
   }
   function renderTabs() {
     $("xtTabs").innerHTML = TABS.map(t => `<button class="xt-tab ${t === ACTIVE ? "on" : ""} ${t.alive ? "" : "dead"}" data-n="${t.n}"
-        title="${esc(t.where)}${t.alive ? "" : " (ended)"}"><span class="dot"></span>${t.n} · ${esc(short(t.where))}
+        title="${esc(t.where)}${inSsh(t) ? " → ssh " + esc(t.ssh.label) : ""}${t.alive ? "" : " (ended)"}"><span class="dot"></span>${t.n} · ${esc(short(t.where))}${inSsh(t) ? " → " + esc(short(t.ssh.label)) : ""}
         <span class="x" data-x="${t.n}" title="Close this terminal">×</span></button>`).join("");
     $("xtTabs").querySelectorAll(".xt-tab").forEach(b => b.onclick = e => {
       const t = TABS.find(x => x.n === +b.dataset.n);
-      if (e.target.dataset.x) closeTab(t); else activate(t);
+      if (e.target.dataset.x) closeTab(t); else { activate(t); follow(t); }
     });
     $("xtEmpty").style.display = TABS.length ? "none" : "";
     $("xtNew").disabled = TABS.filter(t => t.alive).length >= MAX_TABS;
-    xtBtn(); saveTabs();
+    xtBtn(); saveTabs(); sshBar();
+  }
+  // clicking a tab: the actions run where that terminal is (an open SSH connection or this machine)
+  function follow(t) {
+    if (!t.alive || t.target === TARGET || (t.target && !OPEN.some(o => o.id === t.target))) return;
+    TARGET = t.target; $("confirmBox").style.display = "none"; loadTargets(); load();
+  }
+  function sshBar() {
+    const t = ACTIVE, bar = $("sshBar");
+    if (!inSsh(t) || TARGET) { bar.style.display = "none"; return; }
+    const same = openFor(t.ssh);
+    bar.style.display = "";
+    bar.innerHTML = `<span>Terminal ${t.n} is logged in to <b>${esc(t.ssh.label)}</b> with ssh. The actions on the left still run on
+      <b>${esc(DATA ? DATA.target : "this machine")}</b>.</span><button class="btn" id="sbGo">${same ? "Run actions there" : "Connect actions to " + esc(t.ssh.label) + "…"}</button>`;
+    $("sbGo").onclick = () => connectTo(t.ssh);
+  }
+  const openFor = d => OPEN.find(o => o.host === d.host && o.user === d.user && +o.port === +d.port);
+  // run the actions on the machine a terminal reached with ssh: switch to an open
+  // connection to it, or open the Connect dialog filled in with its address
+  function connectTo(d) {
+    const o = openFor(d);
+    if (o) { TARGET = o.id; loadTargets(); load(); return; }
+    $("connBtn").onclick();
+    $("kHost").value = d.host; $("kPort").value = d.port; $("kUser").value = d.user;
+    if (d.key_path && !$("kPath").value) $("kPath").value = d.key_path;     // ready if "Key file" is picked
+    ($("kUser").value ? ($("kAuth").value === "password" ? $("kPw") : $("kGo")) : $("kUser")).focus();
   }
   function xtBtn() {
     const here = DATA ? DATA.target : "this machine";
@@ -343,6 +395,7 @@ document.addEventListener("DOMContentLoaded", () => {
           if (x.reset) t.xt.reset();
           if (x.data) t.xt.write(Uint8Array.from(atob(x.data), c => c.charCodeAt(0)));
           t.off = x.offset;
+          if ("ssh" in x && JSON.stringify(x.ssh || null) !== JSON.stringify(t.ssh || null)) { t.ssh = x.ssh || null; renderTabs(); }
           if (!x.alive) { t.xt.write(x.gone ? "\r\n[this terminal was closed]\r\n"
                                             : "\r\n[the shell has ended - close this tab with ×]\r\n"); ended(t); }
         }
@@ -365,7 +418,8 @@ document.addEventListener("DOMContentLoaded", () => {
     if (!saved.length) return;
     let r; try { r = await api("/api/term/list", {}); } catch (e) { return; }
     const live = new Set(r.sessions.filter(s => s.alive).map(s => s.id));
-    saved.filter(x => live.has(x.id)).forEach(x => makeTab(x.id, x.where, x.target, x.n));
+    saved.filter(x => live.has(x.id)).forEach(x => {
+      makeTab(x.id, x.where, x.target, x.n).ssh = (r.sessions.find(s => s.id === x.id) || {}).ssh || null; });
     TABS.forEach(t => t.el.style.display = "none");
     if (TABS.length) activate(TABS[TABS.length - 1]); else renderTabs();
   })();
@@ -392,6 +446,7 @@ document.addEventListener("DOMContentLoaded", () => {
                                ...r.scanned.map(s => ({ v: s.host, l: [s.hostname, s.device_type, s.os_guess].filter(Boolean).join(" · ") || "SSH open in a scan" }))]
       .filter(x => !seen.has(x.v) && seen.add(x.v)).map(x => `<option value="${esc(x.v)}">${esc(x.l)}</option>`).join("");
     PREV = r.previous;
+    sshBar();
   }
   let PREV = [];
   $("tgtSel").onchange = () => { TARGET = $("tgtSel").value; $("confirmBox").style.display = "none"; loadTargets(); load(); };

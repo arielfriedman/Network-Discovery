@@ -32,6 +32,39 @@ Entry template:
 
 ---
 
+## 2026-10-18 - Actions follow the terminal's machine (ssh typed in a terminal)
+**Change:** (1) Clicking a terminal tab on the Actions page sets "Run on" to that tab's machine.
+(2) `panel/terminal.py` detects `ssh` running in the foreground of a terminal on this machine
+(`tcgetpgrp` on the pty, the `ssh` process in that group, `ssh -G` with its arguments for the real
+host/user/port incl. `~/.ssh/config` aliases) and reports it with each poll and in `/api/term/list`.
+(3) The tab name shows `→ user@host`; a yellow bar says the actions still run on this machine and
+offers "Connect actions to user@host…" (Connect dialog pre-filled) or "Run actions there" when that
+machine is already connected. (4) Clicking an action while the active terminal is in such an ssh
+session asks: connect actions there / type into that terminal / run on this machine / cancel.
+Docs: `docs/ACTIONS_PLAN.md` (new section), `docs/USER_GUIDE.md` (Actions).
+**Why (user report):** "when opening a new terminal in actions tab, when connecting to other devices
+with ssh the actions still only run on the local machine and not on the connected ssh session device".
+**Cause:** actions always run where the "Run on" dropdown points. A terminal tab never changed it,
+and an `ssh` typed inside a local terminal is invisible to the panel - the actions had no way to
+know about that session.
+**Issues / errors:** first Connect pre-fill switched the login method to "Key file" whenever a key
+file existed -> wrong when the user logged in with a password -> the key path is filled in, the
+method stays Password. Test-only: no sshd on this machine and the outage had wiped the old test kit
+-> rebuilt: scratch PostgreSQL (port 55432) and a small paramiko SSH server (port 2222, marks its
+shells with `SIM_SSH=1`); test panel on 8790.
+**Verified:** API: at the prompt `ssh` is null; after typing `ssh -p 2222 tester@127.0.0.1` it is
+`tester@127.0.0.1:2222` (at the password prompt and after login); after `exit` null again; an alias
+from an ssh config file (`ssh -F cfg simalias`) resolved to `aliasuser@127.0.0.1:2222`. Headless Brave,
+scripted, 20/20 checks: tab name and bar appear; action click asks; "Type into terminal" runs in the
+ssh session (`WHERE=1`); "Run on this machine" runs locally (`WHERE=local`); Connect dialog pre-filled
+(127.0.0.1 / 2222 / tester / Password); after connecting, Run on = that machine, bar hidden, action runs
+there (`WHERE=1`); tab clicks switch Run on both ways; bar button switches to the open connection;
+after `exit` tab name and bar back to normal; page reload keeps the state; no JavaScript errors.
+Screenshots checked.
+**Not verified / follow-up:** by hand in the user's browser against a real device; panel running as
+root (uses the user's `~/.ssh/config` for `ssh -G`); `ssh` started from a terminal on an SSH-connected
+machine (a hop further) is not detected - only terminals on this machine.
+
 ## 2026-10-17 - Copy on GitHub
 **Change:** the repo is also on GitHub: https://github.com/arielfriedman/Network-Discovery (public).
 Remote `github` added, and `origin` has two push URLs (GitLab, then GitHub), so one `git push`

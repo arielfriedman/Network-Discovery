@@ -249,3 +249,5 @@ details.sys div{margin:3px 0 0 12px}
 .xt-stack{height:460px}
 .xt-stack .xt{height:100%;box-sizing:border-box}
 .xt-empty{height:100%;box-sizing:border-box;display:flex;align-items:center;justify-content:center;text-align:center;padding:20px;border:1px dashed var(--border);border-radius:var(--radius);font-size:13.5px}
+.ssh-bar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin:0 0 8px;padding:8px 12px;border:1px solid var(--warning);border-radius:var(--radius);background:var(--surface-1);font-size:13px}
+.ssh-bar span{flex:1;min-width:200px}

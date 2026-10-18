@@ -152,6 +152,30 @@ terminal: colours, `htop`, `nano`, `sudo` password prompts typed by you.
   disconnecting a machine ends its terminals; stopping the panel closes all.
 - Code: `panel/terminal.py`, routes in `panel/serve.py`, UI in `panel/web/actions.html`.
 
+## Actions follow the terminal (added 2026-10-18)
+
+User report: "when connecting to other devices with ssh the actions still only run on
+the local machine". Actions run where "Run on" says; terminals did not change it.
+
+- **Clicking a terminal tab** sets "Run on" to that tab's machine (this machine, or
+  the SSH connection it was opened on, while that connection is open).
+- **`ssh` typed in a terminal on this machine** is detected: `terminal.py` reads the
+  pty's foreground process group (`tcgetpgrp`), finds the `ssh` process in it (also
+  behind sudo / sshpass), and resolves where it goes with `ssh -G` + the same
+  arguments, so `~/.ssh/config` aliases give the real host, user and port (as root:
+  the user's own `~/.ssh/config`). Sent with each poll result as `ssh: {user, host,
+  port, key_path, label}` (null at the prompt), and in `/api/term/list` for reloads.
+- The tab name shows it (`1 · this machine → root@pve`), and a yellow bar above the
+  terminal says the actions still run on this machine, with **Connect actions to
+  <machine>…** (the Connect dialog filled in with address, port, user and the first
+  key file that exists; login method stays Password) or, when that machine is already
+  connected, **Run actions there**.
+- Running an action while the active terminal is in such an ssh session asks first:
+  **Connect actions to <machine>**, **Type into terminal N** (runs in that ssh
+  session, where prompts can be answered), **Run on this machine**, or Cancel.
+- The panel never logs in through the user's own ssh session; running there means a
+  normal panel connection (host key confirmed, secrets in memory only).
+
 ## Resume here
 
 Next: the user picks. Open items are in docs/DEVLOG.md and the memory note.

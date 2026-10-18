@@ -120,6 +120,12 @@ Choose one of three kinds of scan:
 - Pick an action, press run, and watch the output live.
 - You can add your own commands, drag one onto another to combine them, and export or import them.
 - The **Terminal** tab opens up to 8 shell tabs, on this machine or over SSH.
+- **Where actions run:** on the machine shown in **Run on**. Clicking a terminal's tab
+  switches Run on to that terminal's machine.
+- **Typed `ssh` yourself in a terminal?** The tab shows where you are logged in
+  (`1 · this machine → root@pve`), and a yellow bar offers **Connect actions to root@pve**,
+  so the actions run there too. Clicking an action while in that ssh session asks where
+  to run it: connect actions there, type it into that terminal, or run it on this machine.
 
 ### Devices
 

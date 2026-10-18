@@ -11,6 +11,11 @@ output can contain anything typed on the machine. Typed text and output are
 never written to the database or the activity log; only open/close is logged.
 sudo passwords are typed into the terminal like in any other terminal.
 
+When the shell in a terminal on this machine is running `ssh` in the foreground
+(the user typed `ssh root@pve`), `ssh_session()` says where it is logged in, so
+the Actions page can tell the user that its actions still run on this machine
+and offer to connect them to that machine instead.
+
 Limits: 8 sessions at once; a session nobody has read for 2 minutes (tab
 closed) is closed; the last 1 MB of output is kept for reloads.
 """
@@ -20,6 +25,8 @@ import base64
 import fcntl
 import os
 import pty
+import pwd
+import subprocess
 import signal
 import socket
 import struct
@@ -157,6 +164,18 @@ class LocalSession(Session):
     def write(self, data: bytes) -> None:
         os.write(self.fd, data)
 
+    def ssh_session(self) -> dict | None:
+        """Where the shell is logged in with `ssh` right now, or None."""
+        try:
+            fg = os.tcgetpgrp(self.fd)          # the terminal's foreground process group
+        except OSError:
+            return None
+        if fg == self.pid:                      # the shell itself: at its prompt
+            return None
+        if getattr(self, "_ssh_fg", None) != fg:
+            self._ssh_fg, self._ssh = fg, _ssh_in_group(fg)
+        return self._ssh
+
     def resize(self, cols: int, rows: int) -> None:
         fcntl.ioctl(self.fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
 
@@ -170,6 +189,61 @@ class LocalSession(Session):
                 if not self.alive:
                     return
                 time.sleep(0.05)
+
+
+def _ssh_in_group(pgid: int) -> dict | None:
+    """The ssh client in process group `pgid` (also behind sudo / sshpass) and where it
+    goes, resolved by `ssh -G` with the same arguments (aliases from ~/.ssh/config)."""
+    pid = None
+    for d in os.listdir("/proc"):
+        if not d.isdigit():
+            continue
+        try:
+            stat = open(f"/proc/{d}/stat").read()
+            fields = stat[stat.rindex(")") + 2:].split()
+            if int(fields[2]) == pgid and stat[stat.index("(") + 1:stat.rindex(")")] == "ssh":
+                pid = int(d)
+                break
+        except (OSError, ValueError, IndexError):
+            continue
+    if pid is None:
+        return None
+    try:
+        argv = open(f"/proc/{pid}/cmdline", "rb").read().decode(errors="replace").split("\0")[:-1]
+        uid = os.stat(f"/proc/{pid}").st_uid
+    except OSError:
+        return None
+    if len(argv) < 2:
+        return None
+    cmd = ["ssh", "-G"] + argv[1:]
+    try:
+        home = pwd.getpwuid(uid).pw_dir
+    except KeyError:
+        home = str(Path.home())
+    if os.geteuid() == 0 and uid != 0 and "-F" not in argv:
+        cfg = os.path.join(home, ".ssh", "config")      # the user's own ssh config, not root's
+        cmd[2:2] = ["-F", cfg if os.path.exists(cfg) else "/dev/null"]
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=3)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    conf: dict[str, list[str]] = {}
+    for line in r.stdout.splitlines():
+        k, _, v = line.partition(" ")
+        conf.setdefault(k.lower(), []).append(v)
+    host = (conf.get("hostname") or [""])[0]
+    if r.returncode != 0 or not host:
+        return None
+    user = (conf.get("user") or [""])[0]
+    port = int((conf.get("port") or ["22"])[0] or 22)
+    key = ""
+    for f in conf.get("identityfile", []):
+        f = os.path.expanduser(f.replace("~", home, 1) if f.startswith("~") else f)
+        if os.path.isfile(f):
+            key = f
+            break
+    label = f"{user}@{host}" + (f":{port}" if port != 22 else "")
+    return {"user": user, "host": host, "port": port, "key_path": key, "label": label}
 
 
 class RemoteSession(Session):
@@ -297,6 +371,8 @@ def poll(offsets: dict, wait: float = POLL_WAIT) -> dict:
         else:
             s.seen = time.time()
             out[sid] = s.read(want[sid], wait=0)
+            if isinstance(s, LocalSession) and s.alive:
+                out[sid]["ssh"] = s.ssh_session()
     for sid, s in found.items():        # a waiting tab still counts as being looked at
         if s is not None:
             s.seen = time.time()
@@ -340,7 +416,9 @@ def close(sid: str, reason: str = "closed") -> dict:
 def list_open() -> list[dict]:
     _reap()
     with _LOCK:
-        return [{"id": s.id, "where": s.where, "alive": s.alive} for s in SESSIONS.values()]
+        return [{"id": s.id, "where": s.where, "alive": s.alive,
+                 "ssh": s.ssh_session() if isinstance(s, LocalSession) and s.alive else None}
+                for s in SESSIONS.values()]
 
 
 def close_all() -> None:
